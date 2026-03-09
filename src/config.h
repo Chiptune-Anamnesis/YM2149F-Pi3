@@ -73,7 +73,7 @@
 
 #define LED_FLASH_MS 100
 #define ENCODER_DEBOUNCE_MS 30
-#define DISPLAY_UPDATE_MS 100
+#define DISPLAY_UPDATE_MS 20
 #define PITCH_MOD_UPDATE_MS 3
 
 // ============================================================================

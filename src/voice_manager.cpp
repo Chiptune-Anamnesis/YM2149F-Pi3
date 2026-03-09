@@ -5,6 +5,7 @@
 #include "fx_chip.h"
 #include "YM2149.h"
 #include <math.h>
+#include <hardware/sync.h>  // For save_and_disable_interrupts()
 
 // Run timing-critical functions from RAM to avoid Flash bus contention
 #define RAM_FUNC __attribute__((section(".time_critical")))
@@ -20,13 +21,13 @@ uint8_t polyMode = 1;  // Default: full poly
 bool unisonMode = false;
 float unisonDetuneCents = 12.0f;
 
-bool voiceActive[3][3] = {{false}};
+volatile bool voiceActive[3][3] = {{false}};
 uint8_t voiceNote[3][3] = {{0}};
 uint8_t voiceChan[3][3] = {{0}};
-uint8_t voiceVol[3][3] = {{0}};
+volatile uint8_t voiceVol[3][3] = {{0}};
 float voiceDetune[3][3] = {{0}};
 uint8_t nextVoice[3] = {0};
-float curPeriod[3][3] = {{0}};
+volatile float curPeriod[3][3] = {{0}};
 
 bool sustainOn[9] = {false};
 bool pendingRelease[3][3] = {{false}};
@@ -211,7 +212,9 @@ static uint8_t getAllowedVoicesMask(uint8_t chip) {
 }
 
 RAM_FUNC void ymSafeWrite(uint8_t chip, uint8_t reg, uint8_t val) {
+  uint32_t irq = save_and_disable_interrupts();
   ymBusBusy = true;
+  restore_interrupts(irq);
   ym.write(chip, reg, val);
   ymBusBusy = false;
 }
@@ -239,7 +242,11 @@ RAM_FUNC void setVoice(uint8_t chip, uint8_t v, uint16_t per, uint8_t vol) {
   }
 
   // Normal mode: write period and volume directly
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.write(chip, v*2, per & 0xFF);
   ym.write(chip, v*2 + 1, (per >> 8) & 0x0F);
   ym.write(chip, 8 + v, vol & 0x0F);
@@ -255,7 +262,11 @@ RAM_FUNC void stopVoice(uint8_t chip, uint8_t v) {
   }
 
   // Normal mode: stop voice by zeroing period and volume
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.write(chip, v*2, 0);
   ym.write(chip, v*2 + 1, 0);
   ym.write(chip, 8 + v, 0);

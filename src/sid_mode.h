@@ -12,7 +12,7 @@
 // When sidModeGlobal is true, device operates as dedicated SID emulator
 // using chips 1 and 2 (6 voices total). Chip 0 is skipped for speed.
 // Per-chip duty cycle allows different timbres on each chip.
-extern bool sidModeGlobal;
+extern volatile bool sidModeGlobal;
 extern uint8_t sidDutyChip[2];  // Duty cycle for chips 1 and 2 (0-15)
 
 // --- SID Mode State ---
@@ -25,24 +25,24 @@ extern uint8_t sidEnvShape;
 // Phase accumulator approach for timing-drift-free volume flipping
 // Even when timer callbacks are delayed, frequency remains accurate
 struct SidVoiceState {
-  uint16_t period;        // YM period (determines note frequency)
-  uint32_t phase;         // Phase accumulator (16.16 fixed point)
-  uint32_t phaseInc;      // Phase increment per timer callback
-  bool isHigh;            // Current volume state (high or low)
-  uint8_t volume;         // Target volume when high (0-15)
-  volatile uint8_t duty;  // Per-voice duty cycle (0-15) - volatile for cross-core visibility
-  bool active;            // Voice is actively playing
+  uint16_t period;                // YM period (determines note frequency)
+  volatile uint32_t phase;        // Phase accumulator (16.16 fixed point) - timer reads/writes
+  volatile uint32_t phaseInc;     // Phase increment per timer callback - main loop writes, timer reads
+  volatile bool isHigh;           // Current volume state (high or low) - timer reads/writes
+  volatile uint8_t volume;        // Target volume when high (0-15) - main loop writes, timer reads
+  volatile uint8_t duty;          // Per-voice duty cycle (0-15) - volatile for cross-core visibility
+  volatile bool active;           // Voice is actively playing - main loop writes, timer reads
   // Extended SID features
-  uint8_t waveform;       // 0=square, 1=saw, 2=tri, 3=pulse
-  uint8_t lastWrittenVol; // Track last HW value to avoid redundant writes
+  volatile uint8_t waveform;      // 0=square, 1=saw, 2=tri, 3=double-pulse
+  volatile uint8_t lastWrittenVol; // Track last HW value to avoid redundant writes
   // PWM sweep (duty cycle LFO)
-  uint32_t pwmPhase;      // LFO phase accumulator
-  uint32_t pwmPhaseInc;   // LFO rate
-  uint8_t pwmDepth;       // 0-15 duty modulation depth
+  volatile uint32_t pwmPhase;     // LFO phase accumulator - timer reads/writes
+  volatile uint32_t pwmPhaseInc;  // LFO rate - main loop writes, timer reads
+  volatile uint8_t pwmDepth;      // 0-15 duty modulation depth - main loop writes, timer reads
   // Hard sync and ring modulation
-  uint8_t syncSource;     // 0=off, 1-2=voice index within chip trio (0-based)
-  uint8_t ringSource;     // 0=off, 1-2=voice index within chip trio (0-based)
-  bool noiseOn;           // Mix YM noise into this voice
+  volatile uint8_t syncSource;    // 0=off, 1-2=voice index within chip trio (0-based)
+  volatile uint8_t ringSource;    // 0=off, 1-2=voice index within chip trio (0-based)
+  volatile bool noiseOn;          // Mix YM noise into this voice
 };
 
 extern SidVoiceState sidState[6];  // 6 voices: [0-2]=chip1, [3-5]=chip2

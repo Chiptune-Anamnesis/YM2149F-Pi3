@@ -7,6 +7,7 @@
 #include "fx_chip.h"
 #include "sample_player.h"
 #include "preset.h"  // For saveGlobalSettings()
+#include <hardware/sync.h>  // For save_and_disable_interrupts()
 
 extern YM2149 ym;
 
@@ -53,7 +54,7 @@ volatile uint8_t midiChannelRemap[16] = {
 uint8_t usbMode = USB_MODE_MIDI;  // USB-MIDI by default
 
 // Global SID mode settings
-bool sidModeGlobal = false;                // SID mode disabled by default
+volatile bool sidModeGlobal = false;       // SID mode disabled by default
 uint8_t sidDutyChip[2] = {8, 8};           // Default 50% duty for both chips
 
 // Display brightness
@@ -403,7 +404,8 @@ void applyEnvSustain(uint8_t sustain) {
 }
 
 void applySidWave(uint8_t wave) {
-  if (wave > 3) wave = 3;
+  // Only square (0) and pulse (3) are supported; clamp invalid values
+  if (wave != 0 && wave != 3) wave = 0;
 
   uint8_t start, end;
   if (!getTargetVoices(start, end)) return;
@@ -411,10 +413,17 @@ void applySidWave(uint8_t wave) {
   for (uint8_t v = start; v < end; v++) {
     voiceSettings[v].sidWave = wave;
 
-    // Update active SID voice state
+    // Update active SID voice state (block timer while modifying)
     if (sidModeGlobal && v >= 3 && v <= 8) {
       uint8_t sidIdx = v - 3;
+      {
+        uint32_t irq = save_and_disable_interrupts();
+        ymBusBusy = true;
+        restore_interrupts(irq);
+      }
       sidState[sidIdx].waveform = wave;
+      sidState[sidIdx].lastWrittenVol = 0xFF;  // Force fresh HW write
+      ymBusBusy = false;
     }
   }
 }
@@ -439,8 +448,14 @@ void applySidDuty(uint8_t duty) {
       uint8_t chipIdx = (sidIdx < 3) ? 0 : 1;
       sidDutyChip[chipIdx] = duty;
 
-      // Update the active SID voice state
+      // Update the active SID voice state (block timer while modifying)
+      {
+        uint32_t irq = save_and_disable_interrupts();
+        ymBusBusy = true;
+        restore_interrupts(irq);
+      }
       sidState[sidIdx].duty = duty;
+      ymBusBusy = false;
     }
   }
 }
@@ -462,7 +477,13 @@ void applySidPwmRate(uint8_t rate) {
       // Full LFO cycle = 65536 phase units
       // phaseInc = rate * 65536 / (25000 * 10) ≈ rate * 0.26
       // Simplified: phaseInc = rate * 17 / 64 (close approximation)
+      {
+        uint32_t irq = save_and_disable_interrupts();
+        ymBusBusy = true;
+        restore_interrupts(irq);
+      }
       sidState[sidIdx].pwmPhaseInc = (rate == 0) ? 0 : ((uint32_t)rate * 17) / 64 + 1;
+      ymBusBusy = false;
     }
   }
 }
@@ -477,37 +498,13 @@ void applySidPwmDepth(uint8_t depth) {
     voiceSettings[v].sidPwmDepth = depth;
 
     if (sidModeGlobal && v >= 3 && v <= 8) {
+      {
+        uint32_t irq = save_and_disable_interrupts();
+        ymBusBusy = true;
+        restore_interrupts(irq);
+      }
       sidState[v - 3].pwmDepth = depth;
-    }
-  }
-}
-
-void applySidSync(uint8_t src) {
-  if (src > 3) src = 3;
-
-  uint8_t start, end;
-  if (!getTargetVoices(start, end)) return;
-
-  for (uint8_t v = start; v < end; v++) {
-    voiceSettings[v].sidSync = src;
-
-    if (sidModeGlobal && v >= 3 && v <= 8) {
-      sidState[v - 3].syncSource = src;
-    }
-  }
-}
-
-void applySidRing(uint8_t src) {
-  if (src > 3) src = 3;
-
-  uint8_t start, end;
-  if (!getTargetVoices(start, end)) return;
-
-  for (uint8_t v = start; v < end; v++) {
-    voiceSettings[v].sidRing = src;
-
-    if (sidModeGlobal && v >= 3 && v <= 8) {
-      sidState[v - 3].ringSource = src;
+      ymBusBusy = false;
     }
   }
 }
@@ -523,11 +520,17 @@ void applySidNoise(uint8_t on) {
 
     if (sidModeGlobal && v >= 3 && v <= 8) {
       uint8_t sidIdx = v - 3;
-      sidState[sidIdx].noiseOn = (on != 0);
 
       // Update YM mixer register to enable/disable noise for this voice
       uint8_t chip = (sidIdx < 3) ? 1 : 2;
-      uint8_t voice = sidIdx % 3;
+
+      // Block timer while modifying state and writing hardware
+      {
+        uint32_t irq = save_and_disable_interrupts();
+        ymBusBusy = true;
+        restore_interrupts(irq);
+      }
+      sidState[sidIdx].noiseOn = (on != 0);
 
       // Read current mixer state and update noise bit
       // Mixer reg 7: bits 0-2 = tone disable (always 1 in SID mode)
@@ -540,7 +543,6 @@ void applySidNoise(uint8_t on) {
           mixer &= ~(1 << (3 + i));  // Enable noise (clear bit)
         }
       }
-      ymBusBusy = true;
       ym.selectYM(chip);
       ym.writeFast(7, mixer);
       ymBusBusy = false;
@@ -861,8 +863,8 @@ void applyPotValue(const PotAssignment& assign, uint8_t value) {
 
     case PCAT_SID:
       switch (assign.paramIndex) {
-        case 0: // Wave (0-3)
-          applyToTarget(assign.target, applySidWave, value >> 6);
+        case 0: // Wave (SQR=0, PLS=3)
+          applyToTarget(assign.target, applySidWave, (value >= 128) ? 3 : 0);
           break;
         case 1: // Duty (0-15)
           applyToTarget(assign.target, applySidDuty, map(value, 0, 255, 0, 15));

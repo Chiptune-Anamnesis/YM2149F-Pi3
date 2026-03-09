@@ -16,13 +16,15 @@ extern bool unisonMode;
 extern float unisonDetuneCents;
 
 // --- Per-Voice State ---
-extern bool voiceActive[3][3];
+// voiceActive, voiceVol, curPeriod are volatile: written by Core 0 main loop,
+// read by timer callbacks and Core 1 snapshot copy
+extern volatile bool voiceActive[3][3];
 extern uint8_t voiceNote[3][3];
 extern uint8_t voiceChan[3][3];
-extern uint8_t voiceVol[3][3];
+extern volatile uint8_t voiceVol[3][3];
 extern float voiceDetune[3][3];
 extern uint8_t nextVoice[3];
-extern float curPeriod[3][3];
+extern volatile float curPeriod[3][3];
 
 // --- Sustain/Release ---
 extern bool sustainOn[9];

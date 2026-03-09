@@ -146,6 +146,7 @@ void setup() {
   dualCoreInit();
 
   // Launch Core 1 for display/encoder handling
+  core1Running = true;
   multicore_launch_core1(core1Entry);
 }
 

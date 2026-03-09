@@ -7,6 +7,7 @@
 #include "sample_player.h"
 #include "preset.h"
 #include "YM2149.h"
+#include <hardware/sync.h>  // For __dmb()
 
 // External YM2149 instance
 extern YM2149 ym;
@@ -35,15 +36,20 @@ volatile uint8_t sidPresetDeleteSlot = 0;
 // Cooperative pause mechanism for flash operations
 volatile bool flashPauseRequested = false;
 volatile bool core1Paused = false;
+volatile bool displayNeedsReinit = false;
+volatile bool core1Running = false;
 
 // Check if Core 0 requested a pause for flash operations and cooperatively wait
 void checkFlashPause() {
   if (flashPauseRequested) {
     core1Paused = true;
+    __dmb();  // Ensure core1Paused is visible to Core 0 before we spin
     while (flashPauseRequested) {
       delayMicroseconds(10);
     }
+    __dmb();  // Ensure we see Core 0's latest state before resuming
     core1Paused = false;
+    __dmb();  // Ensure core1Paused=false is visible to Core 0
   }
 }
 
@@ -66,6 +72,7 @@ void dualCoreInit() {
 void updateSnapshot() {
   // Copy current state into snapshot copy
   // Called from Core 1 - reads Core 0's state directly (safe for display purposes)
+  __dmb();  // Ensure we see Core 0's latest writes before copying
 
   // Voice state
   for (uint8_t c = 0; c < 3; c++) {
@@ -103,6 +110,7 @@ void updateSnapshot() {
         displaySnapshotCopy.voiceNote[c][v] = voiceNote[c][v];
         displaySnapshotCopy.voicePeriod[c][v] = (uint16_t)(curPeriod[c][v] + 0.5f);  // Actual period with all mods
       }
+      displaySnapshotCopy.voiceChan[c][v] = voiceChan[c][v];
     }
   }
 
@@ -300,16 +308,6 @@ void processCommands() {
 
       case CMD_SET_SID_PWM_DEPTH:
         applySidPwmDepth(cmd.param1);
-        needsSync = true;
-        break;
-
-      case CMD_SET_SID_SYNC:
-        applySidSync(cmd.param1);
-        needsSync = true;
-        break;
-
-      case CMD_SET_SID_RING:
-        applySidRing(cmd.param1);
         needsSync = true;
         break;
 
@@ -661,6 +659,13 @@ void core1Entry() {
     // This MUST be at the start of the loop, BEFORE any I2C/display operations
     checkFlashPause();
 
+    // If Core 0 had to forcibly idle us mid-I2C, reinitialize the display
+    if (displayNeedsReinit) {
+      displayNeedsReinit = false;
+      displayInit();
+      delay(10);
+    }
+
     // Update snapshot from Core 0's state
     updateSnapshot();
 
@@ -671,12 +676,15 @@ void core1Entry() {
     checkFlashPause();
 
     // Update OLED display based on current mode
+    unsigned long displayStart = millis();
     switch (displayMode) {
       case DISPLAY_VIZ:
         if (vizMode == VIZ_MODE_SCOPE) {
           updateDisplayScope();
         } else if (vizMode == VIZ_MODE_MATRIX) {
           updateDisplayMatrix();
+        } else if (vizMode == VIZ_MODE_CHMATRIX) {
+          updateDisplayChannelMatrix();
         } else {
           updateDisplay();
         }
@@ -726,10 +734,16 @@ void core1Entry() {
         break;
     }
 
+    // Watchdog: if display update took too long, I2C bus likely hung - reinit
+    if (millis() - displayStart > 500) {
+      displayInit();
+      delay(10);
+    }
+
     // Check for flash pause after display update (display.display() can block 50-100ms)
     checkFlashPause();
 
     // Small delay to prevent tight spinning
-    delay(10);
+    delay(2);
   }
 }

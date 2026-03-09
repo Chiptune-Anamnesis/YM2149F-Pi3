@@ -473,3 +473,109 @@ void updateDisplayMatrix() {
 
   display.display();
 }
+
+void updateDisplayChannelMatrix() {
+  static unsigned long lastUpdate = 0;
+  static float phaseAccum[9] = {0};  // Persistent phase accumulators per channel
+
+  unsigned long now = millis();
+  if (now - lastUpdate < DISPLAY_UPDATE_MS) return;
+  float dt = (now - lastUpdate) / 1000.0f;
+  lastUpdate = now;
+
+  display.clearDisplay();
+
+  const int cellW = 42;
+  const int cellH = 21;
+  const int innerW = cellW - 2;
+  const int innerH = cellH - 2;
+
+  // For each MIDI channel 0-8, find the best active voice data
+  uint8_t chanVol[9] = {0};
+  uint16_t chanPeriod[9] = {0};
+  bool chanActive[9] = {false};
+
+  for (uint8_t ch = 0; ch < 9; ch++) {
+    for (uint8_t c = 0; c < 3; c++) {
+      for (uint8_t v = 0; v < 3; v++) {
+        if (displaySnapshotCopy.voiceChan[c][v] == ch &&
+            displaySnapshotCopy.voiceActive[c][v] &&
+            displaySnapshotCopy.voiceVol[c][v] > 0) {
+          chanActive[ch] = true;
+          if (displaySnapshotCopy.voiceVol[c][v] > chanVol[ch]) {
+            chanVol[ch] = displaySnapshotCopy.voiceVol[c][v];
+            chanPeriod[ch] = displaySnapshotCopy.voicePeriod[c][v];
+          }
+        }
+      }
+    }
+  }
+
+  // Update phase accumulators
+  for (uint8_t ch = 0; ch < 9; ch++) {
+    if (chanActive[ch] && chanPeriod[ch] > 0) {
+      float freq = 1789772.5f / (16.0f * chanPeriod[ch]);
+      float visualFreq = freq * 0.002f;
+      phaseAccum[ch] += visualFreq * dt * 60.0f;
+      if (phaseAccum[ch] > 1000.0f) phaseAccum[ch] -= 1000.0f;
+    } else {
+      phaseAccum[ch] *= 0.95f;
+    }
+  }
+
+  // Draw each cell (row = channel group 0-2, col = channel within group 0-2)
+  for (uint8_t row = 0; row < 3; row++) {
+    for (uint8_t col = 0; col < 3; col++) {
+      uint8_t ch = row * 3 + col;
+
+      int cellX = col * cellW;
+      int cellY = row * cellH;
+      int innerX = cellX + 1;
+      int innerY = cellY + 1;
+      int midY = innerY + innerH / 2;
+
+      bool isActive = chanActive[ch];
+
+      if (isActive) {
+        display.drawRect(cellX, cellY, cellW, cellH, SH110X_WHITE);
+      } else {
+        display.drawPixel(cellX, cellY, SH110X_WHITE);
+        display.drawPixel(cellX + cellW - 1, cellY, SH110X_WHITE);
+        display.drawPixel(cellX, cellY + cellH - 1, SH110X_WHITE);
+        display.drawPixel(cellX + cellW - 1, cellY + cellH - 1, SH110X_WHITE);
+      }
+
+      // Label: "C1"-"C9"
+      display.setFont(&TomThumb);
+      display.setTextSize(1);
+      display.setTextColor(SH110X_WHITE);
+      display.setCursor(innerX + 1, innerY + 5);
+      display.print('C');
+      display.print(ch + 1);
+
+      display.drawFastHLine(innerX, midY, innerW, SH110X_WHITE);
+
+      if (isActive && chanPeriod[ch] > 0) {
+        float freq = 1789772.5f / (16.0f * chanPeriod[ch]);
+        float vol = chanVol[ch] / 15.0f;
+
+        int prevY = midY;
+        for (int x = 0; x < innerW; x++) {
+          float phase = phaseAccum[ch] + (x / (float)innerW) * (freq * 0.008f);
+          float wave = (fmodf(phase, 1.0f) < 0.5f) ? 1.0f : -1.0f;
+
+          int amplitude = (int)(wave * vol * (innerH / 2 - 1));
+          int y = midY - amplitude;
+          y = constrain(y, innerY + 1, innerY + innerH - 2);
+
+          if (x > 0) {
+            display.drawLine(innerX + x - 1, prevY, innerX + x, y, SH110X_WHITE);
+          }
+          prevY = y;
+        }
+      }
+    }
+  }
+
+  display.display();
+}

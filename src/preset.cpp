@@ -122,51 +122,63 @@ void presetWriteFlash(uint32_t offset, const uint8_t* data, size_t len) {
   memcpy(flashBuffer + offsetInSector, data, len);
 
   // ===== COOPERATIVE PAUSE MECHANISM =====
-  // Step 1: Request Core 1 to pause at a safe point (between display updates)
-  flashPauseRequested = true;
+  if (core1Running) {
+    // Step 1: Request Core 1 to pause at a safe point (between display updates)
+    flashPauseRequested = true;
+    __dmb();  // Ensure Core 1 sees flashPauseRequested before we check core1Paused
 
-  // Step 2: Wait for Core 1 to reach its safe pause point
-  // Core 1 will set core1Paused=true when it's NOT in the middle of I2C
-  unsigned long waitStart = millis();
-  while (!core1Paused) {
-    // Timeout after 500ms to avoid infinite hang
-    if (millis() - waitStart > 500) {
-      // Core 1 didn't respond - proceed anyway (last resort)
-      break;
+    // Step 2: Wait for Core 1 to reach its safe pause point
+    // Core 1 will set core1Paused=true when it's NOT in the middle of I2C
+    unsigned long waitStart = millis();
+    while (!core1Paused) {
+      // Timeout after 500ms to avoid infinite hang
+      if (millis() - waitStart > 500) {
+        // Core 1 didn't respond - proceed anyway (last resort)
+        break;
+      }
+      delayMicroseconds(100);
     }
-    delayMicroseconds(100);
-  }
-  bool forcedIdle = !core1Paused;  // Track if we hit timeout
+    bool forcedIdle = !core1Paused;  // Track if we hit timeout
 
-  // Step 3: Now Core 1 is safely paused in a busy-wait loop
-  // It's safe to call idleOtherCore because Core 1 is at a known point
-  noInterrupts();
-  rp2040.idleOtherCore();
+    // Step 3: Now Core 1 is safely paused in a busy-wait loop
+    // It's safe to call idleOtherCore because Core 1 is at a known point
+    noInterrupts();
+    rp2040.idleOtherCore();
 
-  // Erase sector (4KB) at aligned address
-  flash_range_erase(flash_offset, PRESET_SECTOR_SIZE);
+    // Erase sector (4KB) at aligned address
+    flash_range_erase(flash_offset, PRESET_SECTOR_SIZE);
 
-  // Write entire sector back
-  flash_range_program(flash_offset, flashBuffer, PRESET_SECTOR_SIZE);
+    // Write entire sector back
+    flash_range_program(flash_offset, flashBuffer, PRESET_SECTOR_SIZE);
 
-  // Resume other core
-  rp2040.resumeOtherCore();
-  interrupts();
+    // If we forcibly idled Core 1 mid-I2C, reinit the bus BEFORE resuming Core 1
+    // to avoid a race where Core 1 resumes into a corrupt I2C state
+    if (forcedIdle) {
+      Wire1.end();
+      Wire1.setSDA(PIN_OLED_SDA);
+      Wire1.setSCL(PIN_OLED_SCL);
+      Wire1.begin();
+      displayNeedsReinit = true;  // Tell Core 1 to reinit display on next loop
+      __dmb();  // Ensure displayNeedsReinit is visible before resuming Core 1
+    }
 
-  // Step 4: Signal Core 1 it can continue
-  flashPauseRequested = false;
+    // Resume other core
+    rp2040.resumeOtherCore();
+    interrupts();
 
-  // If we forcibly idled Core 1 mid-I2C, reinit the bus to recover
-  if (forcedIdle) {
-    Wire1.end();
-    Wire1.setSDA(PIN_OLED_SDA);
-    Wire1.setSCL(PIN_OLED_SCL);
-    Wire1.begin();
+    // Step 4: Signal Core 1 it can continue
+    flashPauseRequested = false;
+    __dmb();  // Ensure Core 1 sees flashPauseRequested=false
+
+    // Give Core 1 a moment to resume before we continue
     delay(10);
+  } else {
+    // Core 1 not running yet (boot-time flash write) - no pause needed
+    noInterrupts();
+    flash_range_erase(flash_offset, PRESET_SECTOR_SIZE);
+    flash_range_program(flash_offset, flashBuffer, PRESET_SECTOR_SIZE);
+    interrupts();
   }
-
-  // Give Core 1 a moment to resume before we continue
-  delay(10);
 
   // Restart SID timer if it was running before flash operations
   // Do this AFTER Core 1 has resumed to avoid any race conditions

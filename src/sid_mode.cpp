@@ -2,6 +2,7 @@
 #include "settings.h"  // For sidModeGlobal, sidDutyChip
 #include "YM2149.h"
 #include "hardware/timer.h"  // For time_us_32()
+#include <hardware/sync.h>   // For save_and_disable_interrupts()
 
 // Which chip to update this callback (alternates 1 and 2 in global mode)
 static uint8_t currentSidChip = 1;
@@ -127,7 +128,11 @@ static void updateSidMixer() {
     }
   }
 
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(sidChip);
   ym.writeFast(7, mixer);
   ymBusBusy = false;
@@ -138,7 +143,11 @@ void sidVoiceStart(uint8_t voice, uint16_t period, uint8_t volume) {
   if (voice >= 3) return;
 
   // Block timer callback while modifying voice state
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
 
   SidVoiceState& s = sidState[voice];
   s.volume = volume & 0x0F;
@@ -154,7 +163,11 @@ void sidVoiceStart(uint8_t voice, uint16_t period, uint8_t volume) {
   updateSidMixer();
 
   // Write initial high volume
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(sidChip);
   ym.writeFast(8 + voice, s.volume);
   ymBusBusy = false;
@@ -168,7 +181,11 @@ void sidVoiceStop(uint8_t voice) {
   if (voice >= 3) return;
 
   // Block timer callback while modifying voice state
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
 
   SidVoiceState& s = sidState[voice];
   s.active = false;
@@ -206,8 +223,11 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
   // Check if pause is requested (for flash reads from Core 1)
   if (sidTimerPauseRequested) return true;
 
-  if (ymBusBusy) return true;  // Skip if main loop is using the bus
-  ymBusBusy = true;  // Block main loop writes during timer operation
+  // Atomic check-and-set of ymBusBusy to prevent TOCTOU race
+  uint32_t irq = save_and_disable_interrupts();
+  if (ymBusBusy) { restore_interrupts(irq); return true; }
+  ymBusBusy = true;
+  restore_interrupts(irq);
 
   // Phase compensation: calculate how many intervals elapsed since last callback
   // This corrects for skipped callbacks (when ymBusBusy blocked us)
@@ -225,36 +245,15 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
     ym.selectYM(currentSidChip);
 
     uint8_t chipOffset = (currentSidChip - 1) * 3;  // 0 for chip 1, 3 for chip 2
-    uint32_t prevPhase[3];  // Track pre-increment phase for sync detection
-
-    // Phase 1: Advance all phases and detect wraps for hard sync
+    // Advance all phases
     for (uint8_t v = 0; v < 3; v++) {
       SidVoiceState& s = sidState[chipOffset + v];
-      prevPhase[v] = s.phase;
       if (s.active && s.phaseInc > 0) {
         s.phase += s.phaseInc * steps;  // Compensate for missed callbacks
       }
     }
 
-    // Phase 2: Apply hard sync (if master wrapped, reset slave phase)
-    for (uint8_t v = 0; v < 3; v++) {
-      SidVoiceState& s = sidState[chipOffset + v];
-      if (!s.active || s.phaseInc == 0) continue;
-      // Check if this voice wrapped (overflow)
-      bool wrapped = ((uint16_t)s.phase < (uint16_t)prevPhase[v]);
-      if (wrapped) {
-        // Reset any voice on this chip that syncs to this voice
-        for (uint8_t sv = 0; sv < 3; sv++) {
-          if (sv == v) continue;
-          SidVoiceState& slave = sidState[chipOffset + sv];
-          if (slave.syncSource == (v + 1)) {  // syncSource 1-3 maps to voice 0-2
-            slave.phase = 0;
-          }
-        }
-      }
-    }
-
-    // Phase 3: Calculate volumes and write to hardware
+    // Calculate volumes and write to hardware
     for (uint8_t v = 0; v < 3; v++) {
       SidVoiceState& s = sidState[chipOffset + v];
       if (!s.active || s.phaseInc == 0) continue;
@@ -290,25 +289,21 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
           else
             vol = (uint8_t)((uint32_t)s.volume * (65535 - phasePos) >> 15);
           break;
-        case 3: // Narrow pulse (1/16 of cycle high)
-          vol = (phasePos < 4096) ? s.volume : 0;
+        case 3: // Double pulse (two narrow pulses, duty controls spacing)
+        {
+          const uint32_t pulseWidth = 4096;  // Each pulse is 1/16 of cycle
+          // Second pulse position: duty maps to 1/16..15/16 of cycle
+          uint32_t secondPos = ((uint32_t)(effectiveDuty + 1) * 65536) / 16;
+          bool inFirst = (phasePos < pulseWidth);
+          bool inSecond = (phasePos >= secondPos && phasePos < secondPos + pulseWidth);
+          vol = (inFirst || inSecond) ? s.volume : 0;
           break;
+        }
         default: // Square with duty
         {
           uint32_t dutyThreshold = ((uint32_t)effectiveDuty * 65536) / 16;
           vol = (phasePos < dutyThreshold) ? s.volume : 0;
           break;
-        }
-      }
-
-      // Ring modulation: multiply with source voice
-      if (s.ringSource > 0) {
-        uint8_t srcIdx = chipOffset + (s.ringSource - 1);
-        SidVoiceState& src = sidState[srcIdx];
-        if (src.active) {
-          uint16_t srcPhase = (uint16_t)src.phase;
-          // Use source as square wave multiplier (half cycle on, half off)
-          if (srcPhase >= 32768) vol = 0;
         }
       }
 
@@ -407,7 +402,11 @@ void sidTimerResume() {
 void setupSidEnvelope(uint8_t chip) {
   // This is for hardware envelope mode, not NextSID PWM mode
   // Configure YM envelope registers for the chip
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(chip);
   ym.writeFast(0x0B, sidEnvFreqFine);
   ym.writeFast(0x0C, sidEnvFreqCoarse);
@@ -472,7 +471,11 @@ void sidModeInit() {
   }
 
   // Disable tone generators on chips 1 and 2 (we use volume PWM only)
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(1);
   ym.writeFast(7, 0b00111111);  // All tones off, all noise off
   ym.selectYM(2);
@@ -505,7 +508,11 @@ void sidModeStop() {
   }
 
   // Re-enable tone generators on chips 1 and 2
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(1);
   ym.writeFast(7, 0b00111000);  // Tones on, noise off
   ym.selectYM(2);
@@ -546,7 +553,11 @@ void sidVoiceStartGlobal(uint8_t voiceIdx, uint16_t period, uint8_t volume) {
 
   // Write ZERO volume initially - timer callback will write real volume
   // on first LOW->HIGH transition, preventing click
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(chip);
   ym.writeFast(8 + voice, 0);  // Start silent
   ymBusBusy = false;
@@ -572,7 +583,11 @@ void sidVoiceStopGlobal(uint8_t voiceIdx) {
   uint8_t chip = (voiceIdx < 3) ? 1 : 2;
   uint8_t voice = voiceIdx % 3;
 
-  ymBusBusy = true;
+  {
+    uint32_t irq = save_and_disable_interrupts();
+    ymBusBusy = true;
+    restore_interrupts(irq);
+  }
   ym.selectYM(chip);
   ym.writeFast(8 + voice, 0);
   ymBusBusy = false;

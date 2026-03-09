@@ -84,7 +84,7 @@ struct VoiceSettings {
   uint8_t envDecay;       // 0-127 decay time
   uint8_t envSustain;     // 0-127 sustain level
   uint8_t sidPwmRate;     // 0-127 PWM sweep LFO rate (was sidOn)
-  uint8_t sidWave;        // 0=square, 1=saw, 2=triangle, 3=pulse
+  uint8_t sidWave;        // 0=square, 3=pulse (saw/triangle disabled)
   uint8_t sidDuty;        // 0-15 duty cycle (0=6%, 8=50%, 15=94%)
   uint8_t maxVolume;      // 0-15, caps voice output volume
   uint8_t portaOn;        // 0=off, 1=on (enables portamento/glide)
@@ -160,7 +160,7 @@ extern uint8_t usbMode;
 // --- Global SID Mode ---
 // When true, device operates as dedicated SID emulator using chips 1+2
 // All 6 voices use volume PWM synthesis instead of YM tone generation
-extern bool sidModeGlobal;
+extern volatile bool sidModeGlobal;
 extern uint8_t sidDutyChip[2];  // Per-chip duty cycle: [0]=chip1, [1]=chip2 (0-15)
 
 // --- Display Brightness ---
@@ -198,8 +198,6 @@ void applySidWave(uint8_t wave);
 void applySidDuty(uint8_t duty);
 void applySidPwmRate(uint8_t rate);
 void applySidPwmDepth(uint8_t depth);
-void applySidSync(uint8_t src);
-void applySidRing(uint8_t src);
 void applySidNoise(uint8_t on);
 void applyEnvRelease(uint8_t release);
 void applyMaxVolume(uint8_t vol);

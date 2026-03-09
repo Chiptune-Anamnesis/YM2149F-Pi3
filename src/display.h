@@ -21,10 +21,11 @@ enum DisplayMode {
 };
 
 // --- Visualization Modes ---
-#define VIZ_MODE_BARS   0
-#define VIZ_MODE_SCOPE  1
-#define VIZ_MODE_MATRIX 2
-#define VIZ_MODE_COUNT  3
+#define VIZ_MODE_BARS     0
+#define VIZ_MODE_SCOPE    1
+#define VIZ_MODE_MATRIX   2
+#define VIZ_MODE_CHMATRIX 3
+#define VIZ_MODE_COUNT    4
 extern uint8_t vizMode;
 
 // --- Display State ---
@@ -115,16 +116,14 @@ extern uint8_t currentChip;
 #define ENVMENU_BACK 4
 
 // SID submenu items
-#define SIDMENU_ITEM_COUNT 9
+#define SIDMENU_ITEM_COUNT 7
 #define SIDMENU_WAVE 0
 #define SIDMENU_DUTY 1
 #define SIDMENU_PWM_RATE 2
 #define SIDMENU_PWM_DEPTH 3
 #define SIDMENU_NOISE 4
-#define SIDMENU_SYNC 5
-#define SIDMENU_RING 6
-#define SIDMENU_RELEASE 7
-#define SIDMENU_BACK 8
+#define SIDMENU_RELEASE 5
+#define SIDMENU_BACK 6
 
 // Pitch submenu items
 #define PITCHMENU_ITEM_COUNT 4
@@ -268,7 +267,8 @@ bool displayInit();
 // Update visualization display
 void updateDisplay();
 void updateDisplayScope();   // Oscilloscope visualization
-void updateDisplayMatrix();  // 3x3 grid oscilloscope (all 9 voices)
+void updateDisplayMatrix();         // 3x3 grid oscilloscope (all 9 voices)
+void updateDisplayChannelMatrix();  // 3x3 grid oscilloscope (MIDI channels 1-9)
 
 // Update main menu display
 void updateMenu();

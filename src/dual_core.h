@@ -22,6 +22,7 @@ struct DisplaySnapshot {
   uint8_t voiceVol[3][3];
   uint8_t voiceNote[3][3];
   uint16_t voicePeriod[3][3];  // Actual YM2149 period (captures all pitch mods)
+  uint8_t voiceChan[3][3];    // MIDI channel assigned to each voice
 
   // Envelope state (for envelope visualization)
   EnvStage envStage[9];
@@ -239,6 +240,8 @@ extern volatile uint8_t sidPresetDeleteSlot;
 // This ensures Core 1 isn't in the middle of I2C when idleOtherCore is called
 extern volatile bool flashPauseRequested;
 extern volatile bool core1Paused;
+extern volatile bool displayNeedsReinit;  // Set by Core 0 after forced idle corrupts I2C
+extern volatile bool core1Running;        // Set before Core 1 launches (skip pause if false)
 void checkFlashPause();
 
 // ============================================================================

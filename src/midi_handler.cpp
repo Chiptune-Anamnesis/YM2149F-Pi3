@@ -187,12 +187,13 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                   fxSetEnabled(false); // Disable FX
                   polyMode = 1;        // Reset to full poly
 
+                  // Set flag BEFORE init/stop so timer callback sees correct mode
+                  sidModeGlobal = enableSid;
                   if (enableSid) {
                     sidModeInit();     // Initialize global SID mode
                   } else {
                     sidModeStop();     // Stop global SID mode
                   }
-                  sidModeGlobal = enableSid;
                 }
               }
               break;
@@ -225,10 +226,8 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
               break;
       case 75:  // SID waveform/envelope shape
               if (sidPWM) {
-                if (d2 < 32) sidWaveType = 0;
-                else if (d2 < 64) sidWaveType = 1;
-                else if (d2 < 96) sidWaveType = 2;
-                else sidWaveType = 3;
+                if (d2 < 64) sidWaveType = 0;  // Square
+                else sidWaveType = 3;           // Pulse
                 sidGeneratePattern();
                 for (uint8_t c = 0; c < 3; c++)
                   for (uint8_t v = 0; v < 3; v++)

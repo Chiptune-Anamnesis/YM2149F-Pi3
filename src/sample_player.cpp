@@ -2,6 +2,8 @@
 #include "YM2149.h"
 #include "config.h"
 #include "pico/time.h"
+#include <hardware/sync.h>  // For save_and_disable_interrupts()
+#include "sid_mode.h"       // For ymBusBusy
 
 // External YM2149 instance
 extern YM2149 ym;
@@ -105,6 +107,12 @@ bool sampleTimerCallback(repeating_timer_t *rt) {
     return true;  // Keep timer running, but do nothing
   }
 
+  // Atomic check-and-set of ymBusBusy to prevent bus collisions
+  uint32_t irq = save_and_disable_interrupts();
+  if (ymBusBusy) { restore_interrupts(irq); return true; }
+  ymBusBusy = true;
+  restore_interrupts(irq);
+
   uint16_t pos = samplePos;
   const uint8_t* sample = (const uint8_t*)currentSample;
 
@@ -129,6 +137,7 @@ bool sampleTimerCallback(repeating_timer_t *rt) {
     ym.writeFast(8 + SAMPLE_VOICE, 0);
   }
 
+  ymBusBusy = false;
   return true;  // Always keep timer running
 }
 
@@ -199,8 +208,9 @@ void sampleTrigger(uint8_t note, uint8_t velocity) {
   // Bounds check
   if (sampleIdx >= SAMPLE_COUNT) sampleIdx = 0;
 
-  // Disable interrupts while updating sample state (prevent race with timer)
-  noInterrupts();
+  // Disable ALL interrupts (including hardware timers) while updating sample state
+  // noInterrupts() only disables GPIO interrupts on RP2040, not timer interrupts
+  uint32_t irq = save_and_disable_interrupts();
 
   // Load sample from lookup table
   currentSample = samples[sampleIdx].data;
@@ -210,7 +220,7 @@ void sampleTrigger(uint8_t note, uint8_t velocity) {
   // Start playback - timer is already running continuously
   samplePlaying = true;
 
-  interrupts();
+  restore_interrupts(irq);
 }
 
 void sampleStop() {

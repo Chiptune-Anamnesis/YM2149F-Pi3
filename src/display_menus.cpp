@@ -1587,7 +1587,8 @@ void updateMidiMenu() {
     display.setTextColor(SH110X_BLACK);
   }
   display.print(vizVal == VIZ_MODE_BARS ? "BARS" :
-                vizVal == VIZ_MODE_SCOPE ? "SCOPE" : "MATRIX");
+                vizVal == VIZ_MODE_SCOPE ? "SCOPE" :
+                vizVal == VIZ_MODE_MATRIX ? "MATRIX" : "CHMATX");
   display.setTextColor(SH110X_WHITE);
 
   // SID (right side)

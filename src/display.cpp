@@ -417,13 +417,11 @@ int getSidValue(int item) {
   int v = getFirstVoiceForScope();
   const VoiceSettings& vs = displaySnapshotCopy.voiceSettings[v];
   switch (item) {
-    case SIDMENU_WAVE:      return vs.sidWave;
+    case SIDMENU_WAVE:      return (vs.sidWave == 3) ? 1 : 0;  // Map: 0=SQR, 3=PLS → 0,1
     case SIDMENU_DUTY:      return vs.sidDuty;
     case SIDMENU_PWM_RATE:  return vs.sidPwmRate;
     case SIDMENU_PWM_DEPTH: return vs.sidPwmDepth;
     case SIDMENU_NOISE:     return vs.sidNoise;
-    case SIDMENU_SYNC:      return vs.sidSync;
-    case SIDMENU_RING:      return vs.sidRing;
     case SIDMENU_RELEASE:   return vs.envRelease;
     default: return 0;
   }
@@ -431,13 +429,11 @@ int getSidValue(int item) {
 
 int getSidMax(int item) {
   switch (item) {
-    case SIDMENU_WAVE:      return 3;
+    case SIDMENU_WAVE:      return 1;  // Only SQR(0) and PLS(1)
     case SIDMENU_DUTY:      return 15;
     case SIDMENU_PWM_RATE:  return 127;
     case SIDMENU_PWM_DEPTH: return 15;
     case SIDMENU_NOISE:     return 1;
-    case SIDMENU_SYNC:      return 3;
-    case SIDMENU_RING:      return 3;
     case SIDMENU_RELEASE:   return 127;
     default: return 0;
   }
@@ -448,24 +444,12 @@ void getSidValueStr(int item, int value, char* buf) {
     case SIDMENU_WAVE:
       switch (value) {
         case 0: strcpy(buf, "SQR"); break;
-        case 1: strcpy(buf, "SAW"); break;
-        case 2: strcpy(buf, "TRI"); break;
-        case 3: strcpy(buf, "PLS"); break;
+        case 1: strcpy(buf, "PLS"); break;
         default: strcpy(buf, "?"); break;
       }
       break;
     case SIDMENU_NOISE:
       strcpy(buf, value ? "ON" : "OFF");
-      break;
-    case SIDMENU_SYNC:
-    case SIDMENU_RING:
-      switch (value) {
-        case 0: strcpy(buf, "OFF"); break;
-        case 1: strcpy(buf, "A"); break;
-        case 2: strcpy(buf, "B"); break;
-        case 3: strcpy(buf, "C"); break;
-        default: strcpy(buf, "?"); break;
-      }
       break;
     default:
       sprintf(buf, "%d", value);
@@ -480,8 +464,6 @@ const char* getSidLabel(int item) {
     case SIDMENU_PWM_RATE:  return "SQR PWM S";
     case SIDMENU_PWM_DEPTH: return "SQR PWM D";
     case SIDMENU_NOISE:     return "NOISE";
-    case SIDMENU_SYNC:      return "SYNC";
-    case SIDMENU_RING:      return "RING";
     case SIDMENU_RELEASE:   return "RELEASE";
     case SIDMENU_BACK:      return "< BACK";
     default: return "?";
@@ -825,13 +807,11 @@ void applyEnvelopeValue(int item, int value) {
 void applySidValue(int item, int value) {
   setTargetForCommands();
   switch (item) {
-    case SIDMENU_WAVE:      sendCommand(CMD_SET_SID_WAVE, (uint8_t)value); break;
+    case SIDMENU_WAVE:      sendCommand(CMD_SET_SID_WAVE, value ? 3 : 0); break;  // Map: 0→SQR(0), 1→PLS(3)
     case SIDMENU_DUTY:      sendCommand(CMD_SET_SID_DUTY, (uint8_t)value); break;
     case SIDMENU_PWM_RATE:  sendCommand(CMD_SET_SID_PWM_RATE, (uint8_t)value); break;
     case SIDMENU_PWM_DEPTH: sendCommand(CMD_SET_SID_PWM_DEPTH, (uint8_t)value); break;
     case SIDMENU_NOISE:     sendCommand(CMD_SET_SID_NOISE, (uint8_t)value); break;
-    case SIDMENU_SYNC:      sendCommand(CMD_SET_SID_SYNC, (uint8_t)value); break;
-    case SIDMENU_RING:      sendCommand(CMD_SET_SID_RING, (uint8_t)value); break;
     case SIDMENU_RELEASE:   sendCommand(CMD_SET_ENV_RELEASE, (uint8_t)value); break;
   }
 }
@@ -854,6 +834,7 @@ bool displayInit() {
   Wire1.setSDA(PIN_OLED_SDA);
   Wire1.setSCL(PIN_OLED_SCL);
   Wire1.begin();
+  Wire1.setTimeout(200);  // Prevent indefinite hang on I2C bus lockup
   delay(250);
 
   if (display.begin(0x3C, true)) {
