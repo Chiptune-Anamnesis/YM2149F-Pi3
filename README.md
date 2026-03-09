@@ -378,3 +378,5 @@ Use semi-poly mode to give each chip its own sound. Send bass on channels 1-3, l
 
 **Save often:**
 You have 36 user preset slots. Save variations as you go - it's easy to lose a good sound by tweaking one parameter too far.
+
+Buy it here: https://hobbychop.com
