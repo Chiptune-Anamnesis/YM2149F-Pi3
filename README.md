@@ -1,4 +1,4 @@
-# YM2149Fx3 User Guide
+# YM2149Fx3-Pi User Guide
 
 A 9-voice synthesizer built around three YM2149F sound chips, with SID emulation, effects processing, sample playback, and full MIDI control.
 
