@@ -365,7 +365,7 @@ Set Link to ALL, then give each chip a different octave shift or detune. Three d
 Assign pots to the parameters you want to tweak live (filter-like sweeps with noise frequency, volume shaping with envelope controls). Use the mod wheel for vibrato and expression for dynamics.
 
 **SID mode for richer timbres:**
-Switch to SID mode when you need waveforms beyond square waves, metallic and aggressive bass textures.
+Switch to SID mode when you need, metallic and aggressive bass textures.
 
 **Effects as instruments:**
 The arpeggiator and harmonizer can turn single notes into full patterns. Route effects to specific voices to keep some voices clean while others are processed.
