@@ -238,8 +238,14 @@ static PresetData createPreset(
   // Sample player
   p.sampleSelect = 0;
   p.sampleMode = SAMPLE_MODE_MAPPED;
+  p.sampleSection = SAMPLE_SECTION_DRUMS;
   p.sampleVolume = 15;
   p.sampleSeqIndex = 0;
+
+  // Per-sample pitch/octave/length defaults
+  memset(p.samplePitchArr, 0, TOTAL_SAMPLE_COUNT);
+  memset(p.sampleOctaveArr, 0, TOTAL_SAMPLE_COUNT);
+  memset(p.sampleLengthArr, 127, TOTAL_SAMPLE_COUNT);
 
   // Global
   p.polyMode = polyMode;

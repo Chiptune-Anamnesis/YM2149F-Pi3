@@ -70,9 +70,6 @@ char sidPresetNames[SID_PRESET_TOTAL][9];  // Names for all presets
 bool sidPresetUsed[SID_PRESET_USER_COUNT]; // Which user slots are used
 
 void cacheSidPresets() {
-  // Let Core 0 finish any pending flash write before we do our own flash reads
-  checkFlashPause();
-
   // Pause SID timer during flash reads (timer keeps running but callback skips work)
   // This prevents any potential XIP bus conflicts while allowing audio to resume immediately
   sidTimerPause();
@@ -95,6 +92,35 @@ void cacheSidPresets() {
   // Resume SID timer
   sidTimerResume();
 }
+
+// SMPL preset cache - prevents flash reads every frame during menu display
+bool smplPresetCacheValid = false;
+char smplPresetNames[SMPL_PRESET_USER_COUNT][9];
+bool smplPresetUsed[SMPL_PRESET_USER_COUNT];
+
+void cacheSmplPresets() {
+  // Cache user preset names and used flags (from flash)
+  for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+    smplPresetUsed[i] = smplPresetUserIsUsed(i);
+    if (smplPresetUsed[i]) {
+      smplPresetGetName(i, smplPresetNames[i]);
+    } else {
+      strcpy(smplPresetNames[i], "--------");
+    }
+  }
+  smplPresetCacheValid = true;
+}
+
+// SMPL preset menu state
+uint8_t smplPresetMenuLevel = PRESET_LEVEL_MENU;
+int smplPresetSelection = 0;
+int smplPresetScrollIndex = 0;
+int smplPresetSelectedSlot = 0;
+bool smplPresetSaving = false;
+unsigned long smplPresetSaveStartTime = 0;
+bool smplPresetDeleting = false;
+unsigned long smplPresetDeleteStartTime = 0;
+bool smplPresetFromMainMenu = false;
 
 // MIDI menu state
 int midiMenuSelection = 0;
@@ -831,6 +857,18 @@ void applyPitchValue(int item, int value) {
 // ============================================================================
 
 bool displayInit() {
+  // I2C bus recovery: if SDA is stuck low (e.g., after forcibly idling Core 1
+  // mid-I2C transfer), toggle SCL to clock out the stuck byte
+  Wire1.end();
+  pinMode(PIN_OLED_SCL, OUTPUT);
+  pinMode(PIN_OLED_SDA, INPUT_PULLUP);
+  for (int i = 0; i < 16; i++) {
+    digitalWrite(PIN_OLED_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(PIN_OLED_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+
   Wire1.setSDA(PIN_OLED_SDA);
   Wire1.setSCL(PIN_OLED_SCL);
   Wire1.begin();
@@ -1004,10 +1042,15 @@ void updateMenu() {
   }
 
   display.setFont(NULL);
-  display.display();
 }
 
 void updateSettingsMenu() {
+  // Delegate to SMPL settings when in sample mode (use snapshot for consistency)
+  if (displaySnapshotCopy.sampleModeGlobal) {
+    updateSampleSettingsMenu();
+    return;
+  }
+
   display.clearDisplay();
   display.setFont(&TomThumb);  // Use smaller font for settings menu
   display.setTextSize(1);
@@ -1117,7 +1160,177 @@ void updateSettingsMenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
+}
+
+// ============================================================================
+// SMPL SETTINGS SCREEN
+// Shown when sampleModeGlobal is active and user enters CHIP/SETTINGS
+// ============================================================================
+
+static const char* getSampleSettingsLabel(int item) {
+  switch (item) {
+    case SMPL_SECTION: return "SECT";
+    case SMPL_SAMPLE:  return "SAMPLE";
+    case SMPL_MODE:    return "MODE";
+    case SMPL_VOL:     return "VOL";
+    case SMPL_PITCH:   return "PITCH";
+    case SMPL_OCT:     return "OCT";
+    case SMPL_LEN:     return "LEN";
+    case SMPL_PRESET:  return "PRESET";
+    case SMPL_BACK:    return "BACK";
+    default:           return "?";
+  }
+}
+
+int getSampleSettingsValue(int item) {
+  switch (item) {
+    case SMPL_SECTION: return displaySnapshotCopy.sampleSection;
+    case SMPL_SAMPLE:  return displaySnapshotCopy.sampleSelect;
+    case SMPL_MODE:    return displaySnapshotCopy.sampleMode;
+    case SMPL_VOL:     return displaySnapshotCopy.sampleVolume;
+    case SMPL_PITCH:   return displaySnapshotCopy.samplePitch;
+    case SMPL_OCT:     return displaySnapshotCopy.sampleOctave;
+    case SMPL_LEN:     return displaySnapshotCopy.sampleLengthParam;
+    case SMPL_PRESET:  return currentSmplPreset;
+    default:           return 0;
+  }
+}
+
+static void getSampleSettingsValueStr(int item, int value, char* buf) {
+  switch (item) {
+    case SMPL_SECTION:
+      snprintf(buf, 12, "%s", getSectionName(value));
+      break;
+    case SMPL_SAMPLE: {
+      uint8_t sect = displaySnapshotCopy.sampleSection;
+      const SampleInfo* si = getSectionSamples(sect);
+      uint8_t cnt = getSectionSampleCount(sect);
+      if (value < cnt) {
+        snprintf(buf, 12, "%s", si[value].name);
+      } else {
+        snprintf(buf, 12, "S%02d", value);
+      }
+      break;
+    }
+    case SMPL_MODE:
+      snprintf(buf, 12, "%s", getSampleModeName(value));
+      break;
+    case SMPL_VOL:
+    case SMPL_LEN:
+      snprintf(buf, 12, "%d", value);
+      break;
+    case SMPL_PITCH:
+      snprintf(buf, 12, "%+d", value);
+      break;
+    case SMPL_OCT:
+      snprintf(buf, 12, "%+d", value);
+      break;
+    case SMPL_PRESET:
+      if (value == 0xFF) {
+        snprintf(buf, 12, "CUSTOM");
+      } else {
+        snprintf(buf, 12, "U%02d", value + 1);
+      }
+      break;
+    default:
+      buf[0] = '\0';
+      break;
+  }
+}
+
+// Forward declaration for SMPL preset menu rendering
+void updateSmplPresetsMenu();
+
+void updateSampleSettingsMenu() {
+  // Delegate to SMPL preset submenu if active
+  if (settingsSubmenu == SUBMENU_SMPL_PRESET) {
+    updateSmplPresetsMenu();
+    return;
+  }
+
+  display.clearDisplay();
+  display.setFont(&TomThumb);
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+
+  // Header
+  display.setCursor(0, 6);
+  display.print("SMPL SETTINGS");
+  display.drawLine(0, 9, 127, 9, SH110X_WHITE);
+
+  // Show 7 items with scrolling
+  const int maxDisplay = 7;
+  const int itemHeight = 6;
+
+  // Adjust scroll to keep selection visible
+  int selPos = settingsSelection;
+  if (selPos < 0) selPos = 0;
+  if (selPos >= SMPL_ITEM_COUNT) selPos = SMPL_ITEM_COUNT - 1;
+
+  if (selPos < settingsScrollOffset) {
+    settingsScrollOffset = selPos;
+  } else if (selPos >= settingsScrollOffset + maxDisplay) {
+    settingsScrollOffset = selPos - maxDisplay + 1;
+  }
+
+  int y = 16;
+  for (int i = 0; i < maxDisplay && (settingsScrollOffset + i) < SMPL_ITEM_COUNT; i++) {
+    int itemIdx = settingsScrollOffset + i;
+    bool isSelected = (itemIdx == settingsSelection);
+    bool isEditing = (isSelected && settingsEditing);
+
+    if (isSelected && !isEditing) {
+      display.fillRect(0, y - 5, 118, itemHeight, SH110X_WHITE);
+      display.setTextColor(SH110X_BLACK);
+    } else {
+      display.setTextColor(SH110X_WHITE);
+    }
+
+    display.setCursor(2, y);
+    display.print(getSampleSettingsLabel(itemIdx));
+
+    if (itemIdx == SMPL_PRESET) {
+      display.print(" >>");
+    }
+    else if (itemIdx != SMPL_BACK) {
+      display.print(": ");
+
+      char valBuf[12];
+      int val = isEditing ? settingsTempValue : getSampleSettingsValue(itemIdx);
+      getSampleSettingsValueStr(itemIdx, val, valBuf);
+
+      if (isEditing) {
+        display.setTextColor(SH110X_WHITE);
+        int vx = display.getCursorX();
+        int vw = strlen(valBuf) * 4 + 4;
+        display.fillRect(vx - 2, y - 5, vw, itemHeight, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+      }
+      display.print(valBuf);
+    }
+
+    display.setTextColor(SH110X_WHITE);
+    y += itemHeight;
+  }
+
+  // Scroll indicators
+  if (settingsScrollOffset > 0) {
+    display.fillTriangle(124, 14, 120, 19, 128, 19, SH110X_WHITE);
+  }
+  if (settingsScrollOffset + maxDisplay < SMPL_ITEM_COUNT) {
+    display.fillTriangle(124, 53, 120, 48, 128, 48, SH110X_WHITE);
+  }
+
+  // Footer
+  display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+  display.setCursor(2, 62);
+  if (settingsEditing) {
+    display.print("Turn=adj  Push=save");
+  } else {
+    display.print("Push=sel  BACK=exit");
+  }
+
+  display.setFont(NULL);
 }
 
 // Draw envelope visualization
@@ -1277,7 +1490,6 @@ void updateVibratoSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }
 
 void updateEnvelopeSubmenu() {
@@ -1378,7 +1590,6 @@ void updateEnvelopeSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }
 
 void updateSidSubmenu() {
@@ -1488,7 +1699,6 @@ void updateSidSubmenu() {
   }
 
   display.setFont(NULL);
-  display.display();
 }
 
 void updatePitchSubmenu() {
@@ -1608,7 +1818,6 @@ void updatePitchSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }
 
 void updateGlideSubmenu() {
@@ -1698,7 +1907,6 @@ void updateGlideSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }
 
 void updateTremoloSubmenu() {
@@ -1788,7 +1996,6 @@ void updateTremoloSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }
 
 void updatePitchEnvSubmenu() {
@@ -1878,5 +2085,4 @@ void updatePitchEnvSubmenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
 }

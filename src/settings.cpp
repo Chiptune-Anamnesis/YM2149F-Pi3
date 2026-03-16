@@ -39,7 +39,6 @@ int potLastValues[3] = {0};
 
 // MIDI channel settings (volatile for cross-core access)
 volatile uint8_t midiSynthChannel = MIDI_CHANNEL_OMNI;  // OMNI by default (respond to all channels)
-volatile uint8_t midiDrumChannel = 9;                    // Channel 10 (0-indexed = 9) for drums
 
 // MIDI channel routing (volatile for cross-core access)
 // Default: identity mapping (no remapping)
@@ -53,9 +52,15 @@ volatile uint8_t midiChannelRemap[16] = {
 // USB mode setting (takes effect on reboot)
 uint8_t usbMode = USB_MODE_MIDI;  // USB-MIDI by default
 
-// Global SID mode settings
-volatile bool sidModeGlobal = false;       // SID mode disabled by default
-uint8_t sidDutyChip[2] = {8, 8};           // Default 50% duty for both chips
+// Device mode settings (YM / SID / SMPL — only one active at a time)
+volatile bool sidModeGlobal = false;
+volatile bool sampleModeGlobal = false;
+uint8_t sidDutyChip[2] = {11, 11};         // Default duty for both chips
+
+// Per-sample pitch + length arrays (indexed by sampleFlatIndex)
+int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT]  = {0};  // All default to 0
+int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT] = {0};  // All default to 0
+uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];         // Initialized to 127 in settingsInit()
 
 // Display brightness
 uint8_t displayBrightness = DISPLAY_BRIGHTNESS_DEFAULT;
@@ -89,7 +94,7 @@ void settingsInit() {
     voiceSettings[v].envSustain = 127;    // Full sustain
     voiceSettings[v].sidPwmRate = 0;      // No PWM sweep by default
     voiceSettings[v].sidWave = 0;         // Square wave
-    voiceSettings[v].sidDuty = 8;         // Default duty cycle
+    voiceSettings[v].sidDuty = 11;        // Default duty cycle
     voiceSettings[v].maxVolume = 15;      // Full volume (no cap)
     voiceSettings[v].portaOn = 0;         // Portamento off by default
     voiceSettings[v].portaSpeed = 64;     // Medium glide speed
@@ -114,6 +119,11 @@ void settingsInit() {
   for (uint8_t i = 0; i < 3; i++) {
     potValues[i] = 0;
     potLastValues[i] = 0;
+  }
+
+  // Initialize per-sample length to full (pitch/octave already zero-init)
+  for (uint8_t i = 0; i < TOTAL_SAMPLE_COUNT; i++) {
+    sampleLengthArr[i] = 127;
   }
 }
 
@@ -277,6 +287,9 @@ const char* getPotParamName(PotCategory cat, uint8_t idx) {
         case 0: return "Select";
         case 1: return "Mode";
         case 2: return "Vol";
+        case 3: return "Pitch";
+        case 4: return "Oct";
+        case 5: return "Len";
         default: return "?";
       }
     case PCAT_GLOBAL:
@@ -972,8 +985,8 @@ void applyPotValue(const PotAssignment& assign, uint8_t value) {
 
     case PCAT_SAMPLE:
       switch (assign.paramIndex) {
-        case 0: // Select (0-23)
-          sampleSelect = map(value, 0, 255, 0, SAMPLE_COUNT - 1);
+        case 0: // Select (0-15)
+          sampleSelect = map(value, 0, 255, 0, getSectionSampleCount(sampleSection) - 1);
           break;
         case 1: // Mode (0-3)
           sampleMode = value >> 6;
@@ -981,6 +994,21 @@ void applyPotValue(const PotAssignment& assign, uint8_t value) {
         case 2: // Volume (1-15)
           sampleVolume = map(value, 0, 255, 1, 15);
           break;
+        case 3: { // Pitch (-12 to +12) per sample
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          samplePitchArr[flat] = map(value, 0, 255, -12, 12);
+          break;
+        }
+        case 4: { // Octave (-3 to +3) per sample
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          sampleOctaveArr[flat] = map(value, 0, 255, -3, 3);
+          break;
+        }
+        case 5: { // Length (1-127) per sample
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          sampleLengthArr[flat] = map(value, 0, 255, 1, 127);
+          break;
+        }
       }
       break;
 

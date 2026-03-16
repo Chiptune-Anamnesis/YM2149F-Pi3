@@ -4,7 +4,7 @@
 
 // ============================================================================
 // SAMPLE PLAYER MODULE
-// Timer-based 1-bit sample playback at 4000 Hz
+// Timer-based 8-bit PCM sample playback at 8000 Hz
 // ============================================================================
 
 // Sample selection modes
@@ -46,17 +46,34 @@
 //   Index 23 = Note 58 (Vibraslap)
 extern const uint8_t gmDrumMap[24];
 
-// --- Sample Player State ---
-extern volatile bool samplePlaying;
-extern volatile uint16_t samplePos;
-extern volatile const uint8_t* currentSample;
-extern volatile uint16_t currentSampleLen;
+// --- Polyphonic Sample Voices (3 voices on chip 2) ---
+#define SAMPLE_VOICE_COUNT 3
+
+struct SampleVoice {
+  volatile bool playing;
+  volatile uint32_t pos;        // 8.8 fixed-point position for pitch shifting
+  volatile const uint8_t* data;
+  volatile uint16_t length;
+  uint16_t pitchIncrement;      // Per-voice pitch increment (8.8 fixed-point, 256=1.0x)
+  uint8_t note;                 // MIDI note that triggered this voice
+  uint8_t sampleIdx;            // Which sample index is playing
+};
+
+extern SampleVoice sampleVoices[SAMPLE_VOICE_COUNT];
+
+// --- Section Selection ---
+#define SAMPLE_SECTION_DRUMS 0
+#define SAMPLE_SECTION_ONESHOTS 1
+#define SAMPLE_SECTION_COUNT 3
+
+extern uint8_t sampleSection;     // 0=DRUMS, 1=ONESHOTS
 
 // --- Configuration ---
-extern uint8_t sampleSelect;      // Selected sample (0-23)
+extern uint8_t sampleSelect;      // Selected sample within current section
 extern uint8_t sampleMode;        // Selection mode
 extern uint8_t sampleVolume;      // Volume scaling (1-15)
 extern uint8_t sampleSeqIndex;    // Current index for SEQ mode
+extern volatile uint8_t lastSampleNote;  // MIDI note of last triggered sample
 
 // ============================================================================
 // FUNCTIONS
@@ -70,6 +87,13 @@ void sampleTrigger(uint8_t note, uint8_t velocity);
 
 // Stop current sample playback
 void sampleStop();
+
+// Enter/exit sample mode (configures chip 2 mixer)
+void sampleModeEnter();
+void sampleModeExit();
+
+// Recompute pitch increment from pitch/octave params
+void sampleUpdatePitchIncrement();
 
 // Get sample mode name
 const char* getSampleModeName(uint8_t mode);

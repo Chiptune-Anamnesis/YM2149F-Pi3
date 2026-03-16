@@ -25,7 +25,8 @@ enum DisplayMode {
 #define VIZ_MODE_SCOPE    1
 #define VIZ_MODE_MATRIX   2
 #define VIZ_MODE_CHMATRIX 3
-#define VIZ_MODE_COUNT    4
+#define VIZ_MODE_SAMPLE   4
+#define VIZ_MODE_COUNT    5
 extern uint8_t vizMode;
 
 // --- Display State ---
@@ -85,6 +86,7 @@ extern uint8_t currentChip;
 #define SUBMENU_PITCH_ENV 6
 #define SUBMENU_FX 7
 #define SUBMENU_SID 8
+#define SUBMENU_SMPL_PRESET 9
 
 // FX submenu items (accessible from main menu)
 // Parameters shown depend on fxType
@@ -152,6 +154,18 @@ extern uint8_t currentChip;
 #define PENVMENU_DIR 2
 #define PENVMENU_BACK 3
 
+
+// SMPL settings menu items (used when sampleModeGlobal is active)
+#define SMPL_ITEM_COUNT 9
+#define SMPL_SECTION 0
+#define SMPL_SAMPLE 1
+#define SMPL_MODE 2
+#define SMPL_VOL 3
+#define SMPL_PITCH 4
+#define SMPL_OCT 5
+#define SMPL_LEN 6
+#define SMPL_PRESET 7
+#define SMPL_BACK 8
 
 // Current submenu level (0 = main settings, 1-3 = effect submenus)
 extern uint8_t settingsSubmenu;
@@ -227,22 +241,38 @@ extern unsigned long presetDeleteStartTime;
 
 // SID preset cache (shared across display files)
 extern bool sidPresetCacheValid;
-extern char sidPresetNames[12][9];   // SID_PRESET_TOTAL = 12
-extern bool sidPresetUsed[8];        // SID_PRESET_USER_COUNT = 8
+extern char sidPresetNames[20][9];   // SID_PRESET_TOTAL = 20 (4 factory + 16 user)
+extern bool sidPresetUsed[16];       // SID_PRESET_USER_COUNT = 16
 void cacheSidPresets();
 
+// SMPL preset cache (shared across display files)
+extern bool smplPresetCacheValid;
+extern char smplPresetNames[16][9];  // SMPL_PRESET_USER_COUNT = 16
+extern bool smplPresetUsed[16];      // SMPL_PRESET_USER_COUNT = 16
+void cacheSmplPresets();
+
+// SMPL preset menu state
+extern uint8_t smplPresetMenuLevel;  // Reuses PRESET_LEVEL_* constants
+extern int smplPresetSelection;
+extern int smplPresetScrollIndex;
+extern int smplPresetSelectedSlot;
+extern bool smplPresetSaving;
+extern unsigned long smplPresetSaveStartTime;
+extern bool smplPresetDeleting;
+extern unsigned long smplPresetDeleteStartTime;
+extern bool smplPresetFromMainMenu;  // true if entered from MENU_PRESETS
+
 // MIDI menu item indices
-#define MIDIMENU_ITEM_COUNT 10
-#define MIDIMENU_SYNTH 0     // Synth MIDI channel
-#define MIDIMENU_DRUMS 1     // Drum MIDI channel
+#define MIDIMENU_ITEM_COUNT 9
+#define MIDIMENU_MCH 0       // MIDI channel (all modes)
+#define MIDIMENU_MODE 1      // Device mode: YM/SID/SMPL
 #define MIDIMENU_ROUTE 2     // MIDI channel routing
-#define MIDIMENU_VIZ 3       // Visualization mode (BARS/SCOPE/MATRIX)
-#define MIDIMENU_SID 4       // SID mode toggle (YM/SID)
-#define MIDIMENU_USB 5       // USB mode (MIDI/Serial) - requires reboot
-#define MIDIMENU_BRT 6       // Display brightness (0-10)
-#define MIDIMENU_POTS 7      // Pot defaults submenu
-#define MIDIMENU_CLK 8       // MIDI clock sync toggle
-#define MIDIMENU_BACK 9
+#define MIDIMENU_VIZ 3       // Visualization mode
+#define MIDIMENU_USB 4       // USB mode (MIDI/Serial) - requires reboot
+#define MIDIMENU_BRT 5       // Display brightness (0-10)
+#define MIDIMENU_POTS 6      // Pot defaults submenu
+#define MIDIMENU_CLK 7       // MIDI clock sync toggle
+#define MIDIMENU_BACK 8
 
 // MIDI menu state
 extern int midiMenuSelection;
@@ -269,12 +299,16 @@ void updateDisplay();
 void updateDisplayScope();   // Oscilloscope visualization
 void updateDisplayMatrix();         // 3x3 grid oscilloscope (all 9 voices)
 void updateDisplayChannelMatrix();  // 3x3 grid oscilloscope (MIDI channels 1-9)
+void updateDisplayDrums();          // Drum sample waveform visualization
 
 // Update main menu display
 void updateMenu();
 
 // Update settings menu display (main level)
 void updateSettingsMenu();
+
+// Update SMPL settings screen (when sampleModeGlobal active)
+void updateSampleSettingsMenu();
 
 // Update effect submenus
 void updateVibratoSubmenu();
@@ -383,6 +417,9 @@ int getFXValue(int sel);
 int getFXMax(int sel);
 void getFXValueStr(int sel, int val, char* buf);
 void applyFXValue(int sel, int val);
+
+// SMPL settings helpers
+int getSampleSettingsValue(int item);
 
 // Name entry helpers (shared between presets menu and input)
 extern const char nameChars[];

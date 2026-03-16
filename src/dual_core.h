@@ -32,6 +32,8 @@ struct DisplaySnapshot {
   uint8_t polyMode;
   uint8_t linkMode;
   uint8_t voiceLinkMask;  // Which Chip 0 voices are linked
+  bool sampleModeGlobal;  // Snapshot of sampleModeGlobal for consistent Core 1 reads
+  bool sidModeGlobal;     // Snapshot of sidModeGlobal for consistent Core 1 reads
   VoiceSettings voiceSettings[9];
 
   // Pot state
@@ -91,9 +93,20 @@ struct DisplaySnapshot {
   uint8_t gateSeed;
 
   // Sample state
+  uint8_t sampleSection;  // 0=DRUMS, 1=ONESHOTS
   uint8_t sampleSelect;
   uint8_t sampleMode;
   uint8_t sampleVolume;
+  bool sampleIsPlaying;
+  uint16_t samplePosition;
+  uint16_t sampleLength;
+  const uint8_t* sampleData;
+  uint8_t sampleTriggeredNote;
+
+  // Sample pitch + length (for SMPL settings screen)
+  int8_t samplePitch;
+  int8_t sampleOctave;
+  uint8_t sampleLengthParam;  // Length parameter (1-127)
 };
 
 // --- Command Types ---
@@ -188,9 +201,13 @@ enum CommandType : uint8_t {
   CMD_SET_GATE_SEED,
 
   // Sample commands
+  CMD_SET_SAMPLE_SECTION,
   CMD_SET_SAMPLE_SELECT,
   CMD_SET_SAMPLE_MODE,
   CMD_SET_SAMPLE_VOLUME,
+  CMD_SET_SAMPLE_PITCH,
+  CMD_SET_SAMPLE_OCTAVE,
+  CMD_SET_SAMPLE_LENGTH,
 
   // Preset commands
   CMD_PRESET_LOAD,    // param1 = preset index
@@ -229,20 +246,43 @@ extern volatile bool presetDeletePending;
 extern volatile uint8_t presetDeleteSlot;
 extern volatile bool midiSavePending;
 
+// Device mode toggle pending (Core 1 sets, Core 0 processes)
+// modeToggleTarget: 0=YM, 1=SID, 2=SMPL
+extern volatile bool modeTogglePending;
+extern volatile uint8_t modeToggleTarget;
+
+// Display reset flag (Core 0 sets after mode toggle, Core 1 resets display state)
+extern volatile bool displayResetPending;
+
 // SID preset pending flags (same pattern - Core 1 sets, Core 0 processes)
 extern volatile bool sidPresetSavePending;
 extern volatile uint8_t sidPresetSaveSlot;
 extern volatile bool sidPresetDeletePending;
 extern volatile uint8_t sidPresetDeleteSlot;
+extern volatile bool sidPresetLoadPending;
+extern volatile uint8_t sidPresetLoadIndex;
 
-// Cooperative pause mechanism for flash operations
-// Core 0 sets flashPauseRequested, Core 1 checks it and sets core1Paused when safe
-// This ensures Core 1 isn't in the middle of I2C when idleOtherCore is called
-extern volatile bool flashPauseRequested;
-extern volatile bool core1Paused;
-extern volatile bool displayNeedsReinit;  // Set by Core 0 after forced idle corrupts I2C
-extern volatile bool core1Running;        // Set before Core 1 launches (skip pause if false)
-void checkFlashPause();
+// SMPL preset pending flags (Core 1 → Core 0)
+extern volatile bool smplPresetSavePending;
+extern volatile uint8_t smplPresetSaveSlot;
+extern volatile bool smplPresetDeletePending;
+extern volatile uint8_t smplPresetDeleteSlot;
+extern volatile bool smplPresetLoadPending;
+extern volatile uint8_t smplPresetLoadIndex;
+
+// Core 1 running flag (set before Core 1 launches)
+extern volatile bool core1Running;
+
+// Cooperative flash write synchronization (no idleOtherCore needed)
+// Core 1 sets flashWriteInProgress, Core 0 checks it in loop() and enters RAM spin
+extern volatile bool flashWriteInProgress;
+extern volatile bool core0InRAM;
+
+// Core 0 calls this when flashWriteInProgress is true — spins in RAM until cleared
+void core0FlashSafeLoop();
+
+// Process pending flash writes (called from Core 1 loop, before I2C)
+void processPendingFlashWrites();
 
 // ============================================================================
 // FUNCTIONS

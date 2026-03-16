@@ -695,8 +695,6 @@ void updatePotsMenu() {
   } else if (potsEditLevel == POT_EDIT_TARGET) {
     display.print("Turn=targ Push=done");
   }
-
-  display.display();
 }
 
 // ============================================================================
@@ -723,7 +721,6 @@ void updateFXSubmenu() {
     display.setCursor(0, 56);
     display.print("Push=BACK");
     display.setFont(NULL);
-    display.display();
     return;
   }
 
@@ -931,7 +928,6 @@ void updateFXSubmenu() {
   }
 
   display.setFont(NULL);
-  display.display();
 }
 
 // ============================================================================
@@ -956,18 +952,6 @@ void updatePresetsMenu() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
 
-  // Show "Saving..." overlay while save is in progress
-  if (presetSaving) {
-    display.setCursor(40, 32);
-    display.print("Saving...");
-    // Clear flag after timeout (save should be complete)
-    if (millis() - presetSaveStartTime >= PRESET_SAVE_DISPLAY_MS) {
-      presetSaving = false;
-    }
-    display.setFont(NULL);
-    display.display();
-    return;
-  }
 
   // Show "Deleting..." overlay while delete is in progress
   if (presetDeleting) {
@@ -978,7 +962,6 @@ void updatePresetsMenu() {
       presetDeleting = false;
     }
     display.setFont(NULL);
-    display.display();
     return;
   }
 
@@ -1217,52 +1200,55 @@ void updatePresetsMenu() {
         nameX += 7;
       }
 
-      // Draw SAVE option after name (position 8)
-      nameX += 4;  // Small gap
+      // SAVE and EXIT centered on row below name
+      int btnY = 40;
+      int saveX = 34;
+      int exitX = 68;
       bool saveCursor = (presetNameCursor == 8);
       if (saveCursor) {
-        display.fillRect(nameX - 1, 26, 26, 11, SH110X_WHITE);
+        display.fillRect(saveX - 1, btnY - 2, 26, 11, SH110X_WHITE);
         display.setTextColor(SH110X_BLACK);
       }
-      display.setCursor(nameX, 28);
+      display.setCursor(saveX, btnY);
       display.print("SAVE");
       display.setTextColor(SH110X_WHITE);
 
-      // Draw EXIT option (position 9)
-      nameX += 30;
       bool exitCursor = (presetNameCursor == 9);
       if (exitCursor) {
-        display.fillRect(nameX - 1, 26, 26, 11, SH110X_WHITE);
+        display.fillRect(exitX - 1, btnY - 2, 26, 11, SH110X_WHITE);
         display.setTextColor(SH110X_BLACK);
       }
-      display.setCursor(nameX, 28);
+      display.setCursor(exitX, btnY);
       display.print("EXIT");
       display.setTextColor(SH110X_WHITE);
 
-      // Switch back to tiny font for hints
-      display.setFont(&TomThumb);
+      if (presetSaving) {
+        display.setCursor(40, 56);
+        display.print("Saved!");
+      }
 
-      // Show character selection hint and footer
-      display.drawLine(0, 55, 127, 55, SH110X_WHITE);
-      if (presetNameEditing) {
-        display.setCursor(0, 48);
-        display.print("Turn=char  Push=next");
-        display.setCursor(2, 62);
-        display.print("Hold=stop editing");
-      } else {
-        display.setCursor(0, 48);
-        if (presetNameCursor == 8) {
-          display.print("Push = save preset");
-        } else if (presetNameCursor == 9) {
-          display.print("Push = exit (no save)");
+      display.setFont(&TomThumb);
+      if (!presetSaving) {
+        if (presetNameEditing) {
+          display.setCursor(0, 56);
+          display.print("Turn=char  Push=next");
+          display.setCursor(2, 63);
+          display.print("Hold=stop editing");
         } else {
-          display.print("Push=edit  Turn=move");
+          display.setCursor(0, 56);
+          if (presetNameCursor == 8) {
+            display.print("Push = save preset");
+          } else if (presetNameCursor == 9) {
+            display.print("Push = exit (no save)");
+          } else {
+            display.print("Push=edit  Turn=move");
+          }
+          display.setCursor(2, 63);
+          display.print("Slot U");
+          if (presetSelectedSlot < 9) display.print("00");
+          else if (presetSelectedSlot < 99) display.print("0");
+          display.print(presetSelectedSlot + 1);
         }
-        display.setCursor(2, 62);
-        display.print("Slot U");
-        if (presetSelectedSlot < 9) display.print("00");
-        else if (presetSelectedSlot < 99) display.print("0");
-        display.print(presetSelectedSlot + 1);
       }
       break;
     }
@@ -1428,7 +1414,368 @@ void updatePresetsMenu() {
   }
 
   display.setFont(NULL);  // Reset to default font
-  display.display();
+}
+
+// ============================================================================
+// SMPL PRESET MENU (submenu within SMPL settings)
+// ============================================================================
+
+void updateSmplPresetsMenu() {
+  display.clearDisplay();
+  display.setFont(&TomThumb);
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+
+  switch (smplPresetMenuLevel) {
+    case PRESET_LEVEL_MENU: {
+      display.setCursor(0, 6);
+      display.print("SMPL PRESETS");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      // Show current preset
+      display.setCursor(0, 16);
+      display.print("Active: ");
+      if (currentSmplPreset == 0xFF) {
+        display.print("CUSTOM");
+      } else {
+        display.print("U");
+        if (currentSmplPreset < 9) display.print("0");
+        display.print(currentSmplPreset + 1);
+      }
+
+      const char* items[] = {"LOAD", "SAVE", "DELETE", "< BACK"};
+      int y = 26;
+      for (int i = 0; i < PRESETMENU_ITEM_COUNT; i++) {
+        bool selected = (smplPresetSelection == i);
+        if (selected) {
+          display.fillRect(0, y - 6, 128, 8, SH110X_WHITE);
+          display.setTextColor(SH110X_BLACK);
+        } else {
+          display.setTextColor(SH110X_WHITE);
+        }
+        display.setCursor(4, y);
+        display.print(items[i]);
+        display.setTextColor(SH110X_WHITE);
+        y += 8;
+      }
+
+      display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+      display.setCursor(2, 62);
+      display.print("Turn=sel  Push=enter");
+      break;
+    }
+
+    case PRESET_LEVEL_LOAD: {
+      display.setCursor(0, 6);
+      display.print("LOAD SMPL PRESET");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      // Count used presets
+      int totalPresets = 0;
+      for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+        if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+          totalPresets++;
+      }
+
+      if (totalPresets == 0) {
+        display.setCursor(10, 30);
+        display.print("No saved presets");
+        display.setCursor(10, 40);
+        display.print("(save first)");
+        display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+        display.setCursor(2, 62);
+        display.print("Push=back");
+      } else {
+        int y = 16;
+        for (int row = 0; row < 7; row++) {
+          int listPos = smplPresetScrollIndex + row;
+          if (listPos >= totalPresets) break;
+
+          // Find the Nth used slot
+          int found = 0;
+          uint8_t userSlot = 0xFF;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            bool used = smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i);
+            if (used) {
+              if (found == listPos) { userSlot = i; break; }
+              found++;
+            }
+          }
+          if (userSlot == 0xFF) break;
+
+          bool selected = (row == 0);
+          if (selected) {
+            display.fillRect(0, y - 6, 122, 7, SH110X_WHITE);
+            display.setTextColor(SH110X_BLACK);
+            smplPresetSelectedSlot = userSlot;
+          } else {
+            display.setTextColor(SH110X_WHITE);
+          }
+
+          display.setCursor(2, y);
+          display.print("U");
+          if (userSlot < 9) display.print("0");
+          display.print(userSlot + 1);
+          display.print(": ");
+          if (smplPresetCacheValid) {
+            display.print(smplPresetNames[userSlot]);
+          }
+          display.setTextColor(SH110X_WHITE);
+          y += 7;
+        }
+
+        if (totalPresets > 7) {
+          int scrollH = 48;
+          int scrollY = 10 + (scrollH * smplPresetScrollIndex / totalPresets);
+          display.drawFastVLine(126, 10, scrollH, SH110X_WHITE);
+          display.fillRect(125, scrollY, 3, 4, SH110X_WHITE);
+        }
+
+        display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+        display.setCursor(2, 62);
+        display.print("Turn=scrl Push=load Hold=back");
+      }
+      break;
+    }
+
+    case PRESET_LEVEL_SAVE: {
+      display.setCursor(0, 6);
+      display.print("SAVE SMPL PRESET");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      int y = 16;
+      for (int row = 0; row < 7; row++) {
+        int slot = smplPresetScrollIndex + row;
+        if (slot >= SMPL_PRESET_USER_COUNT) break;
+
+        bool selected = (slot == smplPresetScrollIndex);
+        if (selected) {
+          display.fillRect(0, y - 6, 122, 7, SH110X_WHITE);
+          display.setTextColor(SH110X_BLACK);
+          smplPresetSelectedSlot = slot;
+        } else {
+          display.setTextColor(SH110X_WHITE);
+        }
+
+        display.setCursor(2, y);
+        display.print("U");
+        if (slot < 9) display.print("0");
+        display.print(slot + 1);
+        display.print(": ");
+
+        if (smplPresetCacheValid && smplPresetUsed[slot]) {
+          display.print(smplPresetNames[slot]);
+        } else {
+          display.print("--------");
+        }
+        display.setTextColor(SH110X_WHITE);
+        y += 7;
+      }
+
+      if (SMPL_PRESET_USER_COUNT > 7) {
+        int scrollH = 48;
+        int scrollY = 10 + (scrollH * smplPresetScrollIndex / SMPL_PRESET_USER_COUNT);
+        display.drawFastVLine(126, 10, scrollH, SH110X_WHITE);
+        display.fillRect(125, scrollY, 3, 4, SH110X_WHITE);
+      }
+
+      display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+      display.setCursor(2, 62);
+      display.print("Push=sel Hold=back");
+      break;
+    }
+
+    case PRESET_LEVEL_NAME: {
+      display.setCursor(0, 6);
+      display.print("ENTER NAME");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      display.setCursor(0, 18);
+      display.print("Slot: U");
+      if (smplPresetSelectedSlot < 9) display.print("0");
+      display.print(smplPresetSelectedSlot + 1);
+
+      display.setFont(NULL);
+      display.setCursor(0, 28);
+      display.print("Name:");
+
+      int nameX = 36;
+      for (int i = 0; i < 8; i++) {
+        bool isCursor = (i == presetNameCursor);
+        if (isCursor && presetNameEditing) {
+          display.fillRect(nameX - 1, 26, 8, 11, SH110X_WHITE);
+          display.setTextColor(SH110X_BLACK);
+        } else if (isCursor) {
+          display.drawRect(nameX - 1, 26, 8, 11, SH110X_WHITE);
+        }
+        display.setCursor(nameX, 28);
+        display.print(presetNameBuffer[i]);
+        display.setTextColor(SH110X_WHITE);
+        nameX += 7;
+      }
+
+      // SAVE and EXIT centered on row below name
+      int btnY = 40;
+      int saveX = 34;
+      int exitX = 68;
+      bool saveCursor = (presetNameCursor == 8);
+      if (saveCursor) {
+        display.fillRect(saveX - 1, btnY - 2, 26, 11, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+      }
+      display.setCursor(saveX, btnY);
+      display.print("SAVE");
+      display.setTextColor(SH110X_WHITE);
+
+      bool exitCursor = (presetNameCursor == 9);
+      if (exitCursor) {
+        display.fillRect(exitX - 1, btnY - 2, 26, 11, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+      }
+      display.setCursor(exitX, btnY);
+      display.print("EXIT");
+      display.setTextColor(SH110X_WHITE);
+
+      if (smplPresetSaving) {
+        display.setCursor(40, 56);
+        display.print("Saved!");
+      }
+
+      display.setFont(&TomThumb);
+      if (!smplPresetSaving) {
+        if (presetNameEditing) {
+          display.setCursor(0, 56);
+          display.print("Turn=char  Push=next");
+          display.setCursor(2, 63);
+          display.print("Hold=stop editing");
+        } else {
+          display.setCursor(0, 56);
+          if (presetNameCursor == 8) {
+            display.print("Push = save preset");
+          } else if (presetNameCursor == 9) {
+            display.print("Push = exit (no save)");
+          } else {
+            display.print("Push=edit  Turn=move");
+          }
+          display.setCursor(2, 63);
+          display.print("Slot U");
+          if (smplPresetSelectedSlot < 9) display.print("0");
+          display.print(smplPresetSelectedSlot + 1);
+        }
+      }
+      break;
+    }
+
+    case PRESET_LEVEL_DELETE: {
+      display.setCursor(0, 6);
+      display.print("DELETE SMPL PRESET");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      int deleteCount = 0;
+      for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+        if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+          deleteCount++;
+      }
+
+      if (deleteCount == 0) {
+        display.setCursor(10, 30);
+        display.print("No saved presets");
+        display.setCursor(10, 40);
+        display.print("(save first)");
+        display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+        display.setCursor(2, 62);
+        display.print("Push=back");
+      } else {
+        int y = 16;
+        for (int row = 0; row < 7; row++) {
+          int listPos = smplPresetScrollIndex + row;
+          if (listPos >= deleteCount) break;
+
+          int found = 0;
+          uint8_t userSlot = 0xFF;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            bool used = smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i);
+            if (used) {
+              if (found == listPos) { userSlot = i; break; }
+              found++;
+            }
+          }
+          if (userSlot == 0xFF) break;
+
+          bool selected = (row == 0);
+          if (selected) {
+            display.fillRect(0, y - 6, 122, 7, SH110X_WHITE);
+            display.setTextColor(SH110X_BLACK);
+            smplPresetSelectedSlot = userSlot;
+          } else {
+            display.setTextColor(SH110X_WHITE);
+          }
+
+          display.setCursor(2, y);
+          display.print("U");
+          if (userSlot < 9) display.print("0");
+          display.print(userSlot + 1);
+          display.print(": ");
+          if (smplPresetCacheValid) {
+            display.print(smplPresetNames[userSlot]);
+          }
+          display.setTextColor(SH110X_WHITE);
+          y += 7;
+        }
+
+        if (deleteCount > 7) {
+          int scrollH = 48;
+          int scrollY = 10 + (scrollH * smplPresetScrollIndex / deleteCount);
+          display.drawFastVLine(126, 10, scrollH, SH110X_WHITE);
+          display.fillRect(125, scrollY, 3, 4, SH110X_WHITE);
+        }
+
+        display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+        display.setCursor(2, 62);
+        display.print("Push=sel  Hold=back");
+      }
+      break;
+    }
+
+    case PRESET_LEVEL_CONFIRM_DEL: {
+      display.setCursor(0, 6);
+      display.print("CONFIRM DELETE");
+      display.drawLine(0, 8, 127, 8, SH110X_WHITE);
+
+      display.setCursor(10, 22);
+      display.print("Delete ");
+      if (smplPresetCacheValid) {
+        display.print(smplPresetNames[smplPresetSelectedSlot]);
+      }
+      display.print("?");
+
+      int y = 38;
+      if (!presetConfirmYes) {
+        display.fillRect(20, y - 6, 20, 8, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+        display.setCursor(22, y);
+        display.print("NO");
+        display.setTextColor(SH110X_WHITE);
+        display.setCursor(62, y);
+        display.print("YES");
+      } else {
+        display.setCursor(22, y);
+        display.print("NO");
+        display.fillRect(58, y - 6, 24, 8, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+        display.setCursor(62, y);
+        display.print("YES");
+        display.setTextColor(SH110X_WHITE);
+      }
+
+      display.drawLine(0, 55, 127, 55, SH110X_WHITE);
+      display.setCursor(2, 62);
+      display.print("Push=confirm");
+      break;
+    }
+  }
+
+  display.setFont(NULL);
 }
 
 // ============================================================================
@@ -1477,46 +1824,48 @@ void updateMidiMenu() {
   int y = 17;
 
   // Get display values
-  uint8_t synthVal = midiEditing && midiMenuSelection == MIDIMENU_SYNTH ? midiTempValue : midiSynthChannel;
-  uint8_t drumVal = midiEditing && midiMenuSelection == MIDIMENU_DRUMS ? midiTempValue : midiDrumChannel;
+  uint8_t mchVal = midiEditing && midiMenuSelection == MIDIMENU_MCH ? midiTempValue : midiSynthChannel;
   uint8_t vizVal = midiEditing && midiMenuSelection == MIDIMENU_VIZ ? midiTempValue : vizMode;
   uint8_t usbVal = midiEditing && midiMenuSelection == MIDIMENU_USB ? midiTempValue : usbMode;
+  uint8_t modeVal = midiEditing && midiMenuSelection == MIDIMENU_MODE ? midiTempValue
+                  : (sampleModeGlobal ? 2 : (sidModeGlobal ? 1 : 0));
+  const char* modeName = modeVal == 2 ? "SMPL" : modeVal == 1 ? "SID" : "YM";
 
-  // === Row 1: SYNTH and DRUM on same line ===
-  bool synthSel = (midiMenuSelection == MIDIMENU_SYNTH);
-  bool drumSel = (midiMenuSelection == MIDIMENU_DRUMS);
+  // === Row 1: M.CH and MODE on same line ===
+  bool mchSel = (midiMenuSelection == MIDIMENU_MCH);
+  bool modeSel = (midiMenuSelection == MIDIMENU_MODE);
 
-  // Synth channel (left side)
-  if (synthSel && !midiEditing) {
+  // M.CH (left side)
+  if (mchSel && !midiEditing) {
     display.fillRect(0, y - 6, 62, itemH, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
   }
   display.setCursor(2, y);
-  display.print("SYNTH:");
-  if (midiEditing && synthSel) {
+  display.print("M.CH:");
+  if (midiEditing && mchSel) {
     display.setTextColor(SH110X_WHITE);
     int vx = display.getCursorX();
     display.fillRect(vx, y - 6, 24, itemH, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
   }
-  display.print(getMidiChannelName(synthVal));
+  display.print(getMidiChannelName(mchVal));
   display.setTextColor(SH110X_WHITE);
 
-  // Drum channel (right side)
-  int drumX = 66;
-  if (drumSel && !midiEditing) {
-    display.fillRect(drumX - 2, y - 6, 62, itemH, SH110X_WHITE);
+  // MODE (right side)
+  int modeX = 66;
+  if (modeSel && !midiEditing) {
+    display.fillRect(modeX - 2, y - 6, 62, itemH, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
   }
-  display.setCursor(drumX, y);
-  display.print("DRUM:");
-  if (midiEditing && drumSel) {
+  display.setCursor(modeX, y);
+  display.print("MODE:");
+  if (midiEditing && modeSel) {
     display.setTextColor(SH110X_WHITE);
     int vx = display.getCursorX();
     display.fillRect(vx, y - 6, 24, itemH, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
   }
-  display.print(getMidiChannelName(drumVal));
+  display.print(modeName);
   display.setTextColor(SH110X_WHITE);
 
   y += itemH;
@@ -1568,14 +1917,11 @@ void updateMidiMenu() {
 
   y += itemH;
 
-  // === Row 3: VIZ and SID on same line ===
+  // === Row 3: VIZ (full width) ===
   bool vizSel = (midiMenuSelection == MIDIMENU_VIZ);
-  bool sidSel = (midiMenuSelection == MIDIMENU_SID);
-  uint8_t sidVal = midiEditing && sidSel ? midiTempValue : (sidModeGlobal ? 1 : 0);
 
-  // VIZ (left side)
   if (vizSel && !midiEditing) {
-    display.fillRect(0, y - 6, 62, itemH, SH110X_WHITE);
+    display.fillRect(0, y - 6, 127, itemH, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
   }
   display.setCursor(2, y);
@@ -1588,24 +1934,8 @@ void updateMidiMenu() {
   }
   display.print(vizVal == VIZ_MODE_BARS ? "BARS" :
                 vizVal == VIZ_MODE_SCOPE ? "SCOPE" :
-                vizVal == VIZ_MODE_MATRIX ? "MATRIX" : "CHMATX");
-  display.setTextColor(SH110X_WHITE);
-
-  // SID (right side)
-  int sidX = 66;
-  if (sidSel && !midiEditing) {
-    display.fillRect(sidX - 2, y - 6, 62, itemH, SH110X_WHITE);
-    display.setTextColor(SH110X_BLACK);
-  }
-  display.setCursor(sidX, y);
-  display.print("MODE:");
-  if (midiEditing && sidSel) {
-    display.setTextColor(SH110X_WHITE);
-    int vx = display.getCursorX();
-    display.fillRect(vx, y - 6, 20, itemH, SH110X_WHITE);
-    display.setTextColor(SH110X_BLACK);
-  }
-  display.print(sidVal ? "SID" : "YM");
+                vizVal == VIZ_MODE_MATRIX ? "MATRIX" :
+                vizVal == VIZ_MODE_CHMATRIX ? "CHMATX" : "SMPL");
   display.setTextColor(SH110X_WHITE);
 
   y += itemH;
@@ -1708,5 +2038,4 @@ void updateMidiMenu() {
   }
 
   display.setFont(NULL);
-  display.display();
 }

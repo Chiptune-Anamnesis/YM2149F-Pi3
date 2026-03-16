@@ -79,20 +79,22 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                ? remapped
                : incomingCh;
 
-  // Check if this channel should be processed (OFF disables the channel entirely)
-  // Note: drum channel check uses INCOMING channel (drums are typically on ch 10)
-  // but synth channel filter and routing uses the REMAPPED channel
-  bool isDrumChannel = (midiDrumChannel != MIDI_CHANNEL_OFF) && (incomingCh == midiDrumChannel);
-  bool isSynthChannel = (midiSynthChannel != MIDI_CHANNEL_OFF) &&
-                        ((midiSynthChannel == MIDI_CHANNEL_OMNI) || (ch == midiSynthChannel));
+  // Check if this channel matches M.CH setting
+  bool isChannel = (midiSynthChannel != MIDI_CHANNEL_OFF) &&
+                   ((midiSynthChannel == MIDI_CHANNEL_OMNI) || (ch == midiSynthChannel));
+
+  // SMPL mode: route matching notes to sample trigger, no synth
+  if (sampleModeGlobal) {
+    if (cmd == 0x90 && d2 > 0 && isChannel) {
+      sampleTrigger(d1, d2);
+    }
+    return;
+  }
+
+  // YM/SID mode: normal synth processing
+  bool isSynthChannel = isChannel;
 
   if (cmd == 0x90 && d2 > 0) {
-    // Check drum channel first (takes priority)
-    if (isDrumChannel) {
-      sampleTrigger(d1, d2);
-      return;
-    }
-    // Then check synth channel
     if (isSynthChannel) {
       noteOn(ch, d1, d2);
     }
@@ -370,19 +372,25 @@ void processUsbMidi() {
                       ? remappedUsb
                       : incomingCh;
 
-    // Check if this channel should be processed (OFF disables the channel entirely)
-    // Note: drum channel check uses INCOMING channel, synth uses REMAPPED channel
-    bool isDrumChannel = (midiDrumChannel != MIDI_CHANNEL_OFF) && (incomingCh == midiDrumChannel);
-    bool isSynthChannel = (midiSynthChannel != MIDI_CHANNEL_OFF) &&
-                          ((midiSynthChannel == MIDI_CHANNEL_OMNI) || (channel == midiSynthChannel));
+    // Check if this channel matches M.CH setting
+    bool isChannel = (midiSynthChannel != MIDI_CHANNEL_OFF) &&
+                     ((midiSynthChannel == MIDI_CHANNEL_OMNI) || (channel == midiSynthChannel));
+
+    // SMPL mode: route matching notes to sample trigger
+    if (sampleModeGlobal) {
+      if (code == 0x09 && packet[3] > 0 && isChannel) {
+        sampleTrigger(packet[2], packet[3]);
+      }
+      // Still process system real-time messages below
+      if (code != 0x0F) continue;
+    }
+
+    bool isSynthChannel = isChannel;
 
     switch (code) {
       case 0x09:  // Note On
         if (packet[3] > 0) {
-          // Check drum channel first (takes priority)
-          if (isDrumChannel) {
-            sampleTrigger(packet[2], packet[3]);
-          } else if (isSynthChannel) {
+          if (isSynthChannel) {
             noteOn(channel, packet[2], packet[3]);
           }
         } else {

@@ -27,30 +27,48 @@ volatile bool presetDeletePending = false;
 volatile uint8_t presetDeleteSlot = 0;
 volatile bool midiSavePending = false;
 
+// Device mode toggle pending (0=YM, 1=SID, 2=SMPL)
+volatile bool modeTogglePending = false;
+volatile uint8_t modeToggleTarget = 0;
+volatile bool displayResetPending = false;
+
 // SID preset pending flags
 volatile bool sidPresetSavePending = false;
 volatile uint8_t sidPresetSaveSlot = 0;
 volatile bool sidPresetDeletePending = false;
 volatile uint8_t sidPresetDeleteSlot = 0;
+volatile bool sidPresetLoadPending = false;
+volatile uint8_t sidPresetLoadIndex = 0;
 
-// Cooperative pause mechanism for flash operations
-volatile bool flashPauseRequested = false;
-volatile bool core1Paused = false;
-volatile bool displayNeedsReinit = false;
+// SMPL preset pending flags
+volatile bool smplPresetSavePending = false;
+volatile uint8_t smplPresetSaveSlot = 0;
+volatile bool smplPresetDeletePending = false;
+volatile uint8_t smplPresetDeleteSlot = 0;
+volatile bool smplPresetLoadPending = false;
+volatile uint8_t smplPresetLoadIndex = 0;
+
+// Core 1 running flag (flash writes check this to decide idle strategy)
 volatile bool core1Running = false;
 
-// Check if Core 0 requested a pause for flash operations and cooperatively wait
-void checkFlashPause() {
-  if (flashPauseRequested) {
-    core1Paused = true;
-    __dmb();  // Ensure core1Paused is visible to Core 0 before we spin
-    while (flashPauseRequested) {
-      delayMicroseconds(10);
-    }
-    __dmb();  // Ensure we see Core 0's latest state before resuming
-    core1Paused = false;
-    __dmb();  // Ensure core1Paused=false is visible to Core 0
+// Cooperative flash write synchronization
+volatile bool flashWriteInProgress = false;
+volatile bool core0InRAM = false;
+
+#define RAM_FUNC __attribute__((section(".time_critical")))
+
+// RAM function — Core 0 enters this during flash writes
+// Must be in RAM because flash is inaccessible during erase/program
+void RAM_FUNC core0FlashSafeLoop() {
+  noInterrupts();
+  core0InRAM = true;
+  __dmb();
+  while (flashWriteInProgress) {
+    tight_loop_contents();
   }
+  core0InRAM = false;
+  __dmb();
+  interrupts();
 }
 
 // ============================================================================
@@ -125,6 +143,8 @@ void updateSnapshot() {
   displaySnapshotCopy.polyMode = polyMode;
   displaySnapshotCopy.linkMode = linkMode;
   displaySnapshotCopy.voiceLinkMask = voiceLinkMask;
+  displaySnapshotCopy.sampleModeGlobal = sampleModeGlobal;
+  displaySnapshotCopy.sidModeGlobal = sidModeGlobal;
 
   // Copy all voice settings
   for (uint8_t i = 0; i < 9; i++) {
@@ -187,9 +207,32 @@ void updateSnapshot() {
   displaySnapshotCopy.gateSeed = gateSeed;
 
   // Sample state
+  displaySnapshotCopy.sampleSection = sampleSection;
   displaySnapshotCopy.sampleSelect = sampleSelect;
   displaySnapshotCopy.sampleMode = sampleMode;
   displaySnapshotCopy.sampleVolume = sampleVolume;
+  // Find best voice for display (prefer the one matching lastSampleNote)
+  int8_t dispVoice = -1;
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    if (sampleVoices[v].playing) {
+      if (sampleVoices[v].note == lastSampleNote) { dispVoice = v; break; }
+      if (dispVoice < 0) dispVoice = v;
+    }
+  }
+  displaySnapshotCopy.sampleIsPlaying = (dispVoice >= 0);
+  if (dispVoice >= 0) {
+    displaySnapshotCopy.samplePosition = (uint16_t)(sampleVoices[dispVoice].pos >> 8);  // Convert 16.8 fixed-point to actual position
+    displaySnapshotCopy.sampleLength = sampleVoices[dispVoice].length;
+    displaySnapshotCopy.sampleData = (const uint8_t*)sampleVoices[dispVoice].data;
+    displaySnapshotCopy.sampleSelect = sampleVoices[dispVoice].sampleIdx;
+  }
+  displaySnapshotCopy.sampleTriggeredNote = lastSampleNote;
+
+  // Sample pitch + length for currently selected sample (for settings screen)
+  uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+  displaySnapshotCopy.samplePitch = samplePitchArr[flat];
+  displaySnapshotCopy.sampleOctave = sampleOctaveArr[flat];
+  displaySnapshotCopy.sampleLengthParam = sampleLengthArr[flat];
 }
 
 // ============================================================================
@@ -574,9 +617,21 @@ void processCommands() {
         break;
 
       // Sample commands
+      case CMD_SET_SAMPLE_SECTION:
+        sampleSection = cmd.param1;
+        if (sampleSection >= SAMPLE_SECTION_COUNT) sampleSection = 0;
+        // Clamp sampleSelect to new section's range
+        { uint8_t cnt = getSectionSampleCount(sampleSection);
+          if (sampleSelect >= cnt) sampleSelect = 0;
+        }
+        sampleSeqIndex = 0;
+        break;
+
       case CMD_SET_SAMPLE_SELECT:
         sampleSelect = cmd.param1;
-        if (sampleSelect >= SAMPLE_COUNT) sampleSelect = 0;
+        { uint8_t cnt = getSectionSampleCount(sampleSection);
+          if (sampleSelect >= cnt) sampleSelect = 0;
+        }
         break;
 
       case CMD_SET_SAMPLE_MODE:
@@ -589,6 +644,33 @@ void processCommands() {
         if (sampleVolume > 15) sampleVolume = 15;
         if (sampleVolume < 1) sampleVolume = 1;
         break;
+
+      case CMD_SET_SAMPLE_PITCH: {
+        int8_t p = cmd.value;
+        if (p < -12) p = -12;
+        if (p > 12) p = 12;
+        uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+        samplePitchArr[flat] = p;
+        break;
+      }
+
+      case CMD_SET_SAMPLE_OCTAVE: {
+        int8_t o = cmd.value;
+        if (o < -3) o = -3;
+        if (o > 3) o = 3;
+        uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+        sampleOctaveArr[flat] = o;
+        break;
+      }
+
+      case CMD_SET_SAMPLE_LENGTH: {
+        uint8_t l = cmd.param1;
+        if (l < 1) l = 1;
+        if (l > 127) l = 127;
+        uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+        sampleLengthArr[flat] = l;
+        break;
+      }
 
       // Preset commands
       case CMD_PRESET_LOAD:
@@ -615,7 +697,67 @@ void processCommands() {
 
   // Handle pending flash operations (set by Core 1, processed here on Core 0)
   // This avoids race conditions - Core 0 controls when idleOtherCore happens
-  // Read slot/flag into locals before clearing to avoid race with Core 1
+  // Device mode toggle (deferred from Core 1 to avoid cross-core hardware access)
+  if (modeTogglePending) {
+    uint8_t newMode = modeToggleTarget;
+    modeTogglePending = false;
+    uint8_t curMode = sampleModeGlobal ? 2 : (sidModeGlobal ? 1 : 0);
+    if (newMode != curMode) {
+      allNotesOffPanic();
+      if (sidModeGlobal) { sidModeStop(); sidModeGlobal = false; }
+      if (sampleModeGlobal) { sampleModeExit(); sampleModeGlobal = false; }
+
+      settingsInit();
+      effectsInit();
+      fxSetEnabled(false);
+      polyMode = 1;
+
+      if (newMode == 1) { sidModeGlobal = true; sidModeInit(); }
+      if (newMode == 2) { sampleModeGlobal = true; sampleModeEnter(); }
+
+      displayResetPending = true;
+      __dmb();
+    }
+  }
+
+  // Preset loads (read-only flash, set Core 0 state — must stay on Core 0)
+  if (sidPresetLoadPending) {
+    uint8_t idx = sidPresetLoadIndex;
+    sidPresetLoadPending = false;
+    sidPresetLoad(idx);
+  }
+
+  if (smplPresetLoadPending) {
+    uint8_t idx = smplPresetLoadIndex;
+    smplPresetLoadPending = false;
+    smplPresetLoad(idx);
+  }
+}
+
+// ============================================================================
+// CORE 1 FLASH WRITE PROCESSING
+// ============================================================================
+
+// Called from Core 1's main loop BEFORE any I2C/display operations.
+// Processes all pending save/delete operations. Since Core 1 controls the
+// timing, flash writes never interrupt an I2C transfer.
+void processPendingFlashWrites() {
+  // Debounced settings save: wait 500ms after last change before writing flash
+  static unsigned long midiSaveRequestTime = 0;
+  static bool midiSaveDeferred = false;
+
+  if (midiSavePending) {
+    midiSavePending = false;
+    midiSaveDeferred = true;
+    midiSaveRequestTime = millis();
+  }
+
+  if (midiSaveDeferred && (millis() - midiSaveRequestTime >= 500)) {
+    midiSaveDeferred = false;
+    saveGlobalSettings();
+  }
+
+  // YM preset save/delete
   if (presetSavePending) {
     uint8_t slot = presetSaveSlot;
     presetSavePending = false;
@@ -628,12 +770,7 @@ void processCommands() {
     presetDeleteUser(slot);
   }
 
-  if (midiSavePending) {
-    midiSavePending = false;
-    saveGlobalSettings();
-  }
-
-  // SID preset operations (handled on Core 0 to avoid flash bus conflict)
+  // SID preset save/delete
   if (sidPresetSavePending) {
     uint8_t slot = sidPresetSaveSlot;
     sidPresetSavePending = false;
@@ -645,6 +782,19 @@ void processCommands() {
     sidPresetDeletePending = false;
     sidPresetDeleteUser(slot);
   }
+
+  // SMPL preset save/delete
+  if (smplPresetSavePending) {
+    uint8_t slot = smplPresetSaveSlot;
+    smplPresetSavePending = false;
+    smplPresetSaveUser(slot, presetNameCmd);
+  }
+
+  if (smplPresetDeletePending) {
+    uint8_t slot = smplPresetDeleteSlot;
+    smplPresetDeletePending = false;
+    smplPresetDeleteUser(slot);
+  }
 }
 
 // ============================================================================
@@ -655,15 +805,17 @@ void core1Entry() {
   // Core 1 main loop - handles display and encoder
 
   while (true) {
-    // Check if Core 0 requested a pause for flash operations
-    // This MUST be at the start of the loop, BEFORE any I2C/display operations
-    checkFlashPause();
+    // Process pending flash writes BEFORE any I2C — safe here, not mid-transfer
+    processPendingFlashWrites();
 
-    // If Core 0 had to forcibly idle us mid-I2C, reinitialize the display
-    if (displayNeedsReinit) {
-      displayNeedsReinit = false;
-      displayInit();
-      delay(10);
+    // Reset settings state if mode was toggled (prevents stale selection indices)
+    // Does NOT change displayMode — user stays on whatever screen they're on
+    if (displayResetPending) {
+      displayResetPending = false;
+      settingsSelection = 0;
+      settingsScrollOffset = 0;
+      settingsEditing = false;
+      settingsSubmenu = SUBMENU_NONE;
     }
 
     // Update snapshot from Core 0's state
@@ -671,9 +823,6 @@ void core1Entry() {
 
     // Handle encoder input (reads hardware, sends commands)
     handleEncoder();
-
-    // Check for flash pause between encoder and display (reduces response latency)
-    checkFlashPause();
 
     // Update OLED display based on current mode
     unsigned long displayStart = millis();
@@ -685,6 +834,8 @@ void core1Entry() {
           updateDisplayMatrix();
         } else if (vizMode == VIZ_MODE_CHMATRIX) {
           updateDisplayChannelMatrix();
+        } else if (vizMode == VIZ_MODE_SAMPLE) {
+          updateDisplayDrums();
         } else {
           updateDisplay();
         }
@@ -734,14 +885,14 @@ void core1Entry() {
         break;
     }
 
+    // Single I2C transfer point — push framebuffer to OLED
+    display.display();
+
     // Watchdog: if display update took too long, I2C bus likely hung - reinit
     if (millis() - displayStart > 500) {
       displayInit();
       delay(10);
     }
-
-    // Check for flash pause after display update (display.display() can block 50-100ms)
-    checkFlashPause();
 
     // Small delay to prevent tight spinning
     delay(2);

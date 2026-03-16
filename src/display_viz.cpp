@@ -1,6 +1,6 @@
 // ============================================================================
 // DISPLAY VISUALIZATION MODULE
-// Visualization rendering for bars, oscilloscope, and matrix modes
+// Visualization rendering for bars, oscilloscope, matrix, and drum modes
 // ============================================================================
 
 #include "display.h"
@@ -8,6 +8,7 @@
 #include "dual_core.h"
 #include "fx_chip.h"
 #include "preset.h"
+#include "sample_player.h"
 #include <Fonts/TomThumb.h>
 
 // ============================================================================
@@ -250,7 +251,6 @@ void updateDisplay() {
     display.print(nameBuf);
   }
 
-  display.display();
 }
 
 // ============================================================================
@@ -366,7 +366,6 @@ void updateDisplayScope() {
     display.print(nameBuf);
   }
 
-  display.display();
 }
 
 // ============================================================================
@@ -471,7 +470,6 @@ void updateDisplayMatrix() {
     }
   }
 
-  display.display();
 }
 
 void updateDisplayChannelMatrix() {
@@ -577,5 +575,95 @@ void updateDisplayChannelMatrix() {
     }
   }
 
-  display.display();
+}
+
+// ============================================================================
+// DRUM SAMPLE WAVEFORM VISUALIZATION
+// ============================================================================
+
+void updateDisplayDrums() {
+  static unsigned long lastUpdate = 0;
+  unsigned long now = millis();
+  if (now - lastUpdate < DISPLAY_UPDATE_MS) return;
+  lastUpdate = now;
+
+  // Keep a static copy of last sample data so waveform persists after playback ends
+  static const uint8_t* lastData = nullptr;
+  static uint16_t lastLen = 0;
+  static uint8_t lastNote = 0;
+  static uint8_t lastSampleIdx = 0;
+
+  // Update static copy when a new sample starts
+  if (displaySnapshotCopy.sampleData != nullptr && displaySnapshotCopy.sampleLength > 0) {
+    lastData = displaySnapshotCopy.sampleData;
+    lastLen = displaySnapshotCopy.sampleLength;
+    lastNote = displaySnapshotCopy.sampleTriggeredNote;
+    lastSampleIdx = displaySnapshotCopy.sampleSelect;
+  }
+
+  display.clearDisplay();
+  display.setFont(&TomThumb);
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+
+  // Waveform area
+  const int waveTop = 8;
+  const int waveBottom = 54;
+  const int waveH = waveBottom - waveTop;
+
+  if (lastData == nullptr || lastLen == 0) {
+    display.setCursor(34, 34);
+    display.print("NO SAMPLE");
+    return;
+  }
+
+  // Top label: note name + sample index
+  static const char* noteNames[] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+  int noteName = lastNote % 12;
+  int octave = (lastNote / 12) - 1;
+
+  display.setCursor(0, 6);
+  display.print(noteNames[noteName]);
+  display.print(octave);
+
+  display.setCursor(100, 6);
+  display.print("S");
+  if (lastSampleIdx < 10) display.print("0");
+  display.print(lastSampleIdx);
+
+  // Draw waveform - fit entire sample across 128 pixels
+  int prevY = waveBottom;
+  for (int x = 0; x < 128; x++) {
+    uint32_t idx = ((uint32_t)x * lastLen) / 128;
+    if (idx >= lastLen) idx = lastLen - 1;
+
+    uint8_t val = lastData[idx];
+
+    // Map 8-bit value (0-255) to display Y (waveBottom=low, waveTop=high)
+    int y = waveBottom - ((val * waveH) >> 8);
+    y = constrain(y, waveTop, waveBottom);
+
+    if (x > 0) {
+      display.drawLine(x - 1, prevY, x, y, SH110X_WHITE);
+    }
+    prevY = y;
+  }
+
+  // Draw playback cursor if playing
+  if (displaySnapshotCopy.sampleIsPlaying && displaySnapshotCopy.sampleLength > 0) {
+    int cursorX = ((uint32_t)displaySnapshotCopy.samplePosition * 127) / displaySnapshotCopy.sampleLength;
+    cursorX = constrain(cursorX, 0, 127);
+    display.drawFastVLine(cursorX, waveTop, waveH, SH110X_WHITE);
+  }
+
+  // Bottom section
+  const int bottomY = 63;
+  display.setCursor(0, bottomY);
+  display.print("VOL:");
+  display.print(displaySnapshotCopy.sampleVolume);
+
+  display.setCursor(90, bottomY);
+  display.print("MODE:");
+  display.print(getSampleModeName(displaySnapshotCopy.sampleMode));
+
 }

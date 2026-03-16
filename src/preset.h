@@ -23,7 +23,7 @@
 // YM Presets section (12KB)
 #define YM_PRESET_FLASH_OFFSET 0
 #define YM_PRESET_FLASH_SIZE 12288    // 12KB = 3 sectors
-#define PRESET_USER_SLOTS 36          // 12KB / sizeof(PresetData), verified by static_assert
+#define PRESET_USER_SLOTS 23          // 12KB / sizeof(PresetData), verified by static_assert
 #define PRESET_FACTORY_COUNT 8
 #define PRESET_NAME_LEN 8
 
@@ -36,12 +36,12 @@
 #define SETTINGS_FLASH_SIZE 4096        // 4KB = 1 sector
 #define SETTINGS_FLASH_BASE (PRESET_FLASH_BASE + SETTINGS_FLASH_OFFSET)
 #define SETTINGS_MAGIC 0x594D5347  // "YMSG"
-#define SETTINGS_VERSION 6  // Version 6: added MIDI clock sync
+#define SETTINGS_VERSION 7  // Version 7: replaced midiDrumChannel with sampleModeGlobal
 
 // Magic and version for validation
 #define PRESET_MAGIC 0x594D33    // "YM3"
 #define PRESET_HEADER_MAGIC 0x594D3348  // "YM3H"
-#define PRESET_VERSION 1
+#define PRESET_VERSION 2
 
 // Preset flags
 #define PRESET_FLAG_USED 0x01
@@ -112,8 +112,14 @@ struct PresetData {
   // Sample player (4 bytes)
   uint8_t sampleSelect;
   uint8_t sampleMode;
+  uint8_t sampleSection;   // 0=DRUMS, 1=ONESHOTS
   uint8_t sampleVolume;
   uint8_t sampleSeqIndex;
+
+  // Per-sample pitch + length (192 bytes = 64 samples × 3 bytes each)
+  int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT];
+  int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT];
+  uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];
 
   // Global settings (5 bytes)
   uint8_t polyMode;
@@ -148,7 +154,7 @@ struct GlobalSettings {
   uint32_t magic;           // 0x594D5347 = "YMSG"
   uint8_t version;          // Settings format version
   uint8_t midiSynthChannel; // 0-15, 0xFE=OFF, 0xFF=OMNI
-  uint8_t midiDrumChannel;  // 0-15, 0xFE=OFF
+  uint8_t sampleModeGlobal; // 0=off, 1=SMPL mode active (replaces midiDrumChannel)
   uint8_t usbMode;          // 0=USB-MIDI, 1=USB-Serial
   uint8_t activePreset;     // Currently loaded preset
   uint8_t vizMode;          // 0=BARS, 1=SCOPE, 2=MATRIX
@@ -166,9 +172,9 @@ struct GlobalSettings {
 // ============================================================================
 
 // SID presets now store full voice settings for all 6 SID voices
-// 4 factory + 8 user = 12 total
+// 4 factory + 16 user = 20 total
 #define SID_PRESET_FACTORY_COUNT 4
-#define SID_PRESET_USER_COUNT 8
+#define SID_PRESET_USER_COUNT 16
 #define SID_PRESET_TOTAL (SID_PRESET_FACTORY_COUNT + SID_PRESET_USER_COUNT)
 #define SID_PRESET_NAME_LEN 8
 
@@ -264,7 +270,7 @@ void presetApplyCurrent(const PresetData& p);
 // Calculate CRC16 for preset data
 uint16_t presetCalcCRC(const PresetData& p);
 
-// Low-level flash operations (called from Core 0 only)
+// Low-level flash operations (called from Core 1 before I2C, idles Core 0)
 void presetWriteFlash(uint32_t offset, const uint8_t* data, size_t len);
 void presetEraseSlot(uint8_t userSlot);
 
@@ -293,3 +299,39 @@ void sidPresetGetName(uint8_t presetIndex, char* buf);
 
 // Get total SID preset count (factory + used user slots)
 uint8_t sidPresetGetTotalCount();
+
+// ============================================================================
+// SMPL PRESETS (stored in sector 1 of SID region)
+// Section-agnostic: stores per-sample pitch/octave/length for all 64 slots
+// ============================================================================
+
+#define SMPL_PRESET_USER_COUNT 16
+#define SMPL_PRESET_NAME_LEN 8
+#define SMPL_PRESET_VERSION 1
+#define SMPL_PRESET_FLAG_USED 0x01
+#define SMPL_PRESET_FLASH_OFFSET (SID_PRESET_FLASH_OFFSET + 4096)  // 2nd sector of SID region
+
+struct SmplPreset {
+  char name[SMPL_PRESET_NAME_LEN];        // 8 bytes
+  uint8_t version;                         // 1 byte
+  uint8_t flags;                           // 1 byte
+  uint8_t sampleMode;                      // 1 byte (SNGL/SEQ/RND/GM)
+  uint8_t sampleVolume;                    // 1 byte
+  int8_t  pitchArr[TOTAL_SAMPLE_COUNT];    // 64 bytes
+  int8_t  octaveArr[TOTAL_SAMPLE_COUNT];   // 64 bytes
+  uint8_t lengthArr[TOTAL_SAMPLE_COUNT];   // 64 bytes
+  uint8_t reserved[2];                     // 2 bytes padding
+};
+// ~206 bytes × 16 = 3,296 bytes (fits in 4KB sector)
+
+// Current SMPL preset index (0xFF = custom/not from preset)
+extern uint8_t currentSmplPreset;
+
+// --- SMPL Preset Functions ---
+
+bool smplPresetLoad(uint8_t presetIndex);
+bool smplPresetSaveUser(uint8_t userSlot, const char* name);
+bool smplPresetDeleteUser(uint8_t userSlot);
+bool smplPresetUserIsUsed(uint8_t userSlot);
+void smplPresetGetName(uint8_t presetIndex, char* buf);
+uint8_t smplPresetGetTotalCount();

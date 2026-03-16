@@ -41,7 +41,85 @@ void handleEncoder() {
       }
     }
     else if (displayMode == DISPLAY_SETTINGS) {
-      if (settingsSubmenu == SUBMENU_NONE) {
+      // SMPL mode: simplified settings menu (use snapshot for cross-core consistency)
+      if (displaySnapshotCopy.sampleModeGlobal && settingsSubmenu == SUBMENU_NONE) {
+        // Defensive clamp: settingsSelection may be stale from normal settings menu
+        if (settingsSelection >= SMPL_ITEM_COUNT) settingsSelection = 0;
+        if (settingsEditing) {
+          int maxVal, minVal = 0;
+          switch (settingsSelection) {
+            case SMPL_SECTION: maxVal = SAMPLE_SECTION_COUNT - 1; break;
+            case SMPL_SAMPLE: maxVal = getSectionSampleCount(displaySnapshotCopy.sampleSection) - 1; break;
+            case SMPL_MODE:   maxVal = SAMPLE_MODE_COUNT - 1; break;
+            case SMPL_VOL:    minVal = 1; maxVal = 15; break;
+            case SMPL_PITCH:  minVal = -12; maxVal = 12; break;
+            case SMPL_OCT:    minVal = -3; maxVal = 3; break;
+            case SMPL_LEN:    minVal = 1; maxVal = 127; break;
+            default:          maxVal = 0; break;
+          }
+          settingsTempValue += delta;
+          if (settingsTempValue < minVal) settingsTempValue = maxVal;
+          if (settingsTempValue > maxVal) settingsTempValue = minVal;
+        } else {
+          settingsSelection += delta;
+          if (settingsSelection < 0) settingsSelection = SMPL_ITEM_COUNT - 1;
+          if (settingsSelection >= SMPL_ITEM_COUNT) settingsSelection = 0;
+        }
+      }
+      else if (settingsSubmenu == SUBMENU_SMPL_PRESET) {
+        // SMPL preset submenu navigation
+        if (smplPresetMenuLevel == PRESET_LEVEL_MENU) {
+          smplPresetSelection += delta;
+          if (smplPresetSelection < 0) smplPresetSelection = PRESETMENU_ITEM_COUNT - 1;
+          if (smplPresetSelection >= PRESETMENU_ITEM_COUNT) smplPresetSelection = 0;
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_LOAD) {
+          int totalPresets = 0;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+              totalPresets++;
+          }
+          if (totalPresets > 0) {
+            smplPresetScrollIndex += delta;
+            if (smplPresetScrollIndex < 0) smplPresetScrollIndex = totalPresets - 1;
+            if (smplPresetScrollIndex >= totalPresets) smplPresetScrollIndex = 0;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_SAVE) {
+          smplPresetScrollIndex += delta;
+          if (smplPresetScrollIndex < 0) smplPresetScrollIndex = SMPL_PRESET_USER_COUNT - 1;
+          if (smplPresetScrollIndex >= SMPL_PRESET_USER_COUNT) smplPresetScrollIndex = 0;
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_NAME) {
+          if (presetNameEditing) {
+            int charIdx = getNameCharIndex(presetNameBuffer[presetNameCursor]);
+            charIdx += delta;
+            if (charIdx < 0) charIdx = nameCharCount - 1;
+            if (charIdx >= nameCharCount) charIdx = 0;
+            presetNameBuffer[presetNameCursor] = nameChars[charIdx];
+          } else {
+            presetNameCursor += delta;
+            if (presetNameCursor > 9) presetNameCursor = 0;
+            if (presetNameCursor > 9) presetNameCursor = 9;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_DELETE) {
+          int deleteCount = 0;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+              deleteCount++;
+          }
+          if (deleteCount > 0) {
+            smplPresetScrollIndex += delta;
+            if (smplPresetScrollIndex < 0) smplPresetScrollIndex = deleteCount - 1;
+            if (smplPresetScrollIndex >= deleteCount) smplPresetScrollIndex = 0;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_CONFIRM_DEL) {
+          presetConfirmYes = !presetConfirmYes;
+        }
+      }
+      else if (settingsSubmenu == SUBMENU_NONE) {
         // Main settings menu
         if (settingsEditing) {
           settingsTempValue += delta;
@@ -367,8 +445,8 @@ void handleEncoder() {
         }
       }
       else if (midiEditing) {
-        if (midiMenuSelection == MIDIMENU_SYNTH) {
-          // Synth: OFF -> OMNI -> 1-16 -> OFF
+        if (midiMenuSelection == MIDIMENU_MCH) {
+          // M.CH: OFF -> OMNI -> 1-16 -> OFF
           if (midiTempValue == MIDI_CHANNEL_OFF) {
             midiTempValue = (delta > 0) ? MIDI_CHANNEL_OMNI : 15;
           } else if (midiTempValue == MIDI_CHANNEL_OMNI) {
@@ -379,25 +457,17 @@ void handleEncoder() {
             if (midiTempValue > 15) midiTempValue = MIDI_CHANNEL_OFF;
           }
         }
-        else if (midiMenuSelection == MIDIMENU_DRUMS) {
-          // Drums: OFF -> 1-16 -> OFF (no OMNI)
-          if (midiTempValue == MIDI_CHANNEL_OFF) {
-            midiTempValue = (delta > 0) ? 0 : 15;
-          } else {
-            midiTempValue += delta;
-            if (midiTempValue < 0) midiTempValue = MIDI_CHANNEL_OFF;
-            if (midiTempValue > 15) midiTempValue = MIDI_CHANNEL_OFF;
-          }
+        else if (midiMenuSelection == MIDIMENU_MODE) {
+          // Cycle: 0=YM, 1=SID, 2=SMPL
+          midiTempValue += delta;
+          if (midiTempValue < 0) midiTempValue = 2;
+          if (midiTempValue > 2) midiTempValue = 0;
         }
         else if (midiMenuSelection == MIDIMENU_VIZ) {
           // Cycle through visualization modes: BARS -> SCOPE -> MATRIX -> BARS
           midiTempValue += delta;
           if (midiTempValue < 0) midiTempValue = VIZ_MODE_COUNT - 1;
           if (midiTempValue >= VIZ_MODE_COUNT) midiTempValue = 0;
-        }
-        else if (midiMenuSelection == MIDIMENU_SID) {
-          // Toggle between YM and SID mode
-          midiTempValue = (midiTempValue == 0) ? 1 : 0;
         }
         else if (midiMenuSelection == MIDIMENU_USB) {
           // Toggle between MIDI and Serial
@@ -427,6 +497,44 @@ void handleEncoder() {
 
   // Long-press handling in preset screens
   if (encoderButtonLongPressed()) {
+    // SMPL preset submenu long-press handling
+    if (displayMode == DISPLAY_SETTINGS && settingsSubmenu == SUBMENU_SMPL_PRESET) {
+      if (smplPresetMenuLevel == PRESET_LEVEL_MENU) {
+        if (smplPresetFromMainMenu) {
+          displayMode = DISPLAY_MENU;
+          menuSelection = MENU_PRESETS;
+          settingsSubmenu = SUBMENU_NONE;
+        } else {
+          settingsSubmenu = SUBMENU_NONE;
+        }
+        return;
+      }
+      else if (smplPresetMenuLevel == PRESET_LEVEL_LOAD) {
+        smplPresetMenuLevel = PRESET_LEVEL_MENU;
+        smplPresetSelection = PRESETMENU_LOAD;
+        return;
+      }
+      else if (smplPresetMenuLevel == PRESET_LEVEL_SAVE) {
+        smplPresetMenuLevel = PRESET_LEVEL_MENU;
+        smplPresetSelection = PRESETMENU_SAVE;
+        return;
+      }
+      else if (smplPresetMenuLevel == PRESET_LEVEL_DELETE) {
+        smplPresetMenuLevel = PRESET_LEVEL_MENU;
+        smplPresetSelection = PRESETMENU_DELETE;
+        return;
+      }
+      else if (smplPresetMenuLevel == PRESET_LEVEL_CONFIRM_DEL) {
+        smplPresetMenuLevel = PRESET_LEVEL_DELETE;
+        return;
+      }
+      else if (smplPresetMenuLevel == PRESET_LEVEL_NAME) {
+        if (presetNameEditing) {
+          presetNameEditing = false;
+        }
+        return;
+      }
+    }
     if (displayMode == DISPLAY_PRESETS) {
       if (presetMenuLevel == PRESET_LEVEL_MENU) {
         // Long press on main preset menu - exit to viz
@@ -503,10 +611,20 @@ void handleEncoder() {
         potsEditLevel = POT_EDIT_NONE;
       }
       else if (menuSelection == MENU_PRESETS) {
-        displayMode = DISPLAY_PRESETS;
-        presetMenuSelection = 0;
-        presetMenuLevel = PRESET_LEVEL_MENU;
-        presetScrollIndex = 0;
+        if (displaySnapshotCopy.sampleModeGlobal) {
+          // Route to SMPL preset submenu within settings
+          displayMode = DISPLAY_SETTINGS;
+          settingsSubmenu = SUBMENU_SMPL_PRESET;
+          smplPresetMenuLevel = PRESET_LEVEL_MENU;
+          smplPresetSelection = 0;
+          smplPresetScrollIndex = 0;
+          smplPresetFromMainMenu = true;
+        } else {
+          displayMode = DISPLAY_PRESETS;
+          presetMenuSelection = 0;
+          presetMenuLevel = PRESET_LEVEL_MENU;
+          presetScrollIndex = 0;
+        }
       }
       else if (menuSelection == MENU_MIDI) {
         displayMode = DISPLAY_MIDI;
@@ -537,7 +655,195 @@ void handleEncoder() {
       }
     }
     else if (displayMode == DISPLAY_SETTINGS) {
-      if (settingsSubmenu == SUBMENU_NONE) {
+      // SMPL mode: simplified button handling (use snapshot for cross-core consistency)
+      if (displaySnapshotCopy.sampleModeGlobal && settingsSubmenu == SUBMENU_NONE) {
+        if (settingsSelection == SMPL_BACK) {
+          settingsEditing = false;
+          displayMode = DISPLAY_MENU;
+          menuSelection = MENU_CHIP0 + currentChip;
+        } else if (settingsSelection == SMPL_PRESET) {
+          // Enter SMPL preset submenu
+          settingsSubmenu = SUBMENU_SMPL_PRESET;
+          smplPresetMenuLevel = PRESET_LEVEL_MENU;
+          smplPresetSelection = 0;
+          smplPresetScrollIndex = 0;
+          smplPresetFromMainMenu = false;
+        } else if (!settingsEditing) {
+          settingsEditing = true;
+          settingsTempValue = getSampleSettingsValue(settingsSelection);
+        } else {
+          // Apply value via command queue to Core 0
+          switch (settingsSelection) {
+            case SMPL_SECTION:
+              sendCommand(CMD_SET_SAMPLE_SECTION, (uint8_t)settingsTempValue);
+              break;
+            case SMPL_SAMPLE:
+              sendCommand(CMD_SET_SAMPLE_SELECT, (uint8_t)settingsTempValue);
+              break;
+            case SMPL_MODE:
+              sendCommand(CMD_SET_SAMPLE_MODE, (uint8_t)settingsTempValue);
+              break;
+            case SMPL_VOL:
+              sendCommand(CMD_SET_SAMPLE_VOLUME, (uint8_t)settingsTempValue);
+              break;
+            case SMPL_PITCH: {
+              Command cmd;
+              cmd.type = CMD_SET_SAMPLE_PITCH;
+              cmd.value = (int8_t)settingsTempValue;
+              cmd.param1 = 0; cmd.param2 = 0; cmd.param3 = 0;
+              queue_try_add(&commandQueue, &cmd);
+              break;
+            }
+            case SMPL_OCT: {
+              Command cmd;
+              cmd.type = CMD_SET_SAMPLE_OCTAVE;
+              cmd.value = (int8_t)settingsTempValue;
+              cmd.param1 = 0; cmd.param2 = 0; cmd.param3 = 0;
+              queue_try_add(&commandQueue, &cmd);
+              break;
+            }
+            case SMPL_LEN:
+              sendCommand(CMD_SET_SAMPLE_LENGTH, (uint8_t)settingsTempValue);
+              break;
+          }
+          settingsEditing = false;
+        }
+      }
+      else if (settingsSubmenu == SUBMENU_SMPL_PRESET) {
+        // SMPL preset submenu button handling
+        if (smplPresetMenuLevel == PRESET_LEVEL_MENU) {
+          if (smplPresetSelection == PRESETMENU_BACK) {
+            if (smplPresetFromMainMenu) {
+              displayMode = DISPLAY_MENU;
+              menuSelection = MENU_PRESETS;
+              settingsSubmenu = SUBMENU_NONE;
+            } else {
+              settingsSubmenu = SUBMENU_NONE;
+            }
+          }
+          else if (smplPresetSelection == PRESETMENU_LOAD) {
+            smplPresetMenuLevel = PRESET_LEVEL_LOAD;
+            smplPresetScrollIndex = 0;
+            cacheSmplPresets();
+          }
+          else if (smplPresetSelection == PRESETMENU_SAVE) {
+            smplPresetMenuLevel = PRESET_LEVEL_SAVE;
+            smplPresetScrollIndex = 0;
+            cacheSmplPresets();
+          }
+          else if (smplPresetSelection == PRESETMENU_DELETE) {
+            smplPresetMenuLevel = PRESET_LEVEL_DELETE;
+            smplPresetScrollIndex = 0;
+            cacheSmplPresets();
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_LOAD) {
+          // Count used presets
+          int totalPresets = 0;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+              totalPresets++;
+          }
+          if (totalPresets == 0) {
+            smplPresetMenuLevel = PRESET_LEVEL_MENU;
+            smplPresetSelection = PRESETMENU_LOAD;
+          } else {
+            // Load the selected preset
+            smplPresetLoadIndex = smplPresetSelectedSlot;
+            smplPresetLoadPending = true;
+            smplPresetMenuLevel = PRESET_LEVEL_MENU;
+            smplPresetSelection = PRESETMENU_LOAD;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_SAVE) {
+          smplPresetSelectedSlot = smplPresetScrollIndex;
+          smplPresetMenuLevel = PRESET_LEVEL_NAME;
+          smplPresetSaving = false;
+
+          if (smplPresetCacheValid && smplPresetUsed[smplPresetSelectedSlot]) {
+            strcpy(presetNameBuffer, smplPresetNames[smplPresetSelectedSlot]);
+          } else {
+            strcpy(presetNameBuffer, "        ");
+          }
+          presetNameCursor = 0;
+          presetNameEditing = false;
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_NAME) {
+          if (presetNameCursor == 8) {
+            // SAVE - stay on name screen, show "Saved!" indicator
+            strncpy(presetNameCmd, presetNameBuffer, 8);
+            presetNameCmd[8] = '\0';
+            __dmb();
+            smplPresetSaveSlot = smplPresetSelectedSlot;
+            smplPresetSavePending = true;
+            smplPresetCacheValid = false;
+            smplPresetSaving = true;
+          }
+          else if (presetNameCursor == 9) {
+            // EXIT
+            smplPresetSaving = false;
+            smplPresetMenuLevel = PRESET_LEVEL_MENU;
+            smplPresetSelection = PRESETMENU_SAVE;
+          }
+          else if (!presetNameEditing) {
+            presetNameEditing = true;
+          } else {
+            presetNameEditing = false;
+            presetNameCursor++;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_DELETE) {
+          int deleteCount = 0;
+          for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+            if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+              deleteCount++;
+          }
+          if (deleteCount == 0) {
+            smplPresetMenuLevel = PRESET_LEVEL_MENU;
+            smplPresetSelection = PRESETMENU_DELETE;
+          } else {
+            presetConfirmYes = false;
+            smplPresetMenuLevel = PRESET_LEVEL_CONFIRM_DEL;
+          }
+        }
+        else if (smplPresetMenuLevel == PRESET_LEVEL_CONFIRM_DEL) {
+          if (presetConfirmYes) {
+            display.clearDisplay();
+            display.setTextSize(1);
+            display.setTextColor(SH110X_WHITE);
+            display.setCursor(36, 28);
+            display.print("Deleting...");
+            display.display();
+
+            int deleteCount = 0;
+            for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+              if (smplPresetCacheValid ? smplPresetUsed[i] : smplPresetUserIsUsed(i))
+                deleteCount++;
+            }
+
+            int newCount = deleteCount - 1;
+            if (newCount == 0) {
+              smplPresetMenuLevel = PRESET_LEVEL_MENU;
+              smplPresetSelection = PRESETMENU_DELETE;
+            } else {
+              smplPresetMenuLevel = PRESET_LEVEL_DELETE;
+              if (smplPresetScrollIndex >= newCount) {
+                smplPresetScrollIndex = newCount - 1;
+              }
+            }
+
+            smplPresetDeleteSlot = smplPresetSelectedSlot;
+            smplPresetDeletePending = true;
+            if (smplPresetCacheValid && smplPresetSelectedSlot < SMPL_PRESET_USER_COUNT) {
+              smplPresetUsed[smplPresetSelectedSlot] = false;
+              strcpy(smplPresetNames[smplPresetSelectedSlot], "--------");
+            }
+          } else {
+            smplPresetMenuLevel = PRESET_LEVEL_DELETE;
+          }
+        }
+      }
+      else if (settingsSubmenu == SUBMENU_NONE) {
         // Main settings menu
         if (settingsSelection == SETTINGS_BACK) {
           settingsEditing = false;
@@ -904,8 +1210,8 @@ void handleEncoder() {
       }
     }
     else if (displayMode == DISPLAY_FX) {
-      // If SID mode active, any press goes back (FX disabled)
-      if (sidModeGlobal) {
+      // If SID or SMPL mode active, any press goes back (FX disabled)
+      if (displaySnapshotCopy.sidModeGlobal || displaySnapshotCopy.sampleModeGlobal) {
         displayMode = DISPLAY_MENU;
         menuSelection = MENU_FX;
       }
@@ -949,8 +1255,9 @@ void handleEncoder() {
       else if (presetMenuLevel == PRESET_LEVEL_LOAD) {
         // Load selected preset (factory or user)
         if (sidModeGlobal) {
-          // SID mode: load SID preset directly
-          sidPresetLoad(presetScrollIndex);
+          // SID mode: defer to Core 0 (modifies sidState[] used by timer)
+          sidPresetLoadIndex = presetScrollIndex;
+          sidPresetLoadPending = true;
         } else {
           // Regular mode: load via command queue
           uint8_t presetIdx = getLoadListPresetIndex(presetScrollIndex);
@@ -966,6 +1273,7 @@ void handleEncoder() {
         // Selected a slot - enter name entry mode
         presetSelectedSlot = presetScrollIndex;
         presetMenuLevel = PRESET_LEVEL_NAME;
+        presetSaving = false;
 
         // Initialize name buffer - use existing name or blank
         if (sidModeGlobal) {
@@ -987,38 +1295,26 @@ void handleEncoder() {
       }
       else if (presetMenuLevel == PRESET_LEVEL_NAME) {
         if (presetNameCursor == 8) {
-          // SAVE selected - save the preset
-          // Show "Saving..." IMMEDIATELY before flash write pauses Core 1
-          display.clearDisplay();
-          display.setTextSize(1);
-          display.setTextColor(SH110X_WHITE);
-          display.setCursor(40, 28);
-          display.print("Saving...");
-          display.display();  // Force update to OLED NOW
-
-          presetMenuLevel = PRESET_LEVEL_MENU;
-          presetMenuSelection = PRESETMENU_SAVE;
-
+          // SAVE - stay on name screen, show "Saved!" indicator
           if (sidModeGlobal) {
-            // SID mode: use pending flag (Core 0 handles flash write)
             strncpy(presetNameCmd, presetNameBuffer, 8);
             presetNameCmd[8] = '\0';
-            __dmb();  // Ensure name is fully written before flag is visible to Core 0
+            __dmb();
             sidPresetSaveSlot = presetSelectedSlot;
             sidPresetSavePending = true;
-            sidPresetCacheValid = false;  // Invalidate cache
+            sidPresetCacheValid = false;
           } else {
-            // Regular mode: use command queue for Core 0
             strncpy(presetNameCmd, presetNameBuffer, 8);
             presetNameCmd[8] = '\0';
-            __dmb();  // Ensure name is fully written before flag is visible to Core 0
-            // Set pending flag - Core 0 will handle the flash operation
+            __dmb();
             presetSaveSlot = presetSelectedSlot;
             presetSavePending = true;
           }
+          presetSaving = true;
         }
         else if (presetNameCursor == 9) {
           // EXIT selected - return to preset menu without saving
+          presetSaving = false;
           presetMenuLevel = PRESET_LEVEL_MENU;
           presetMenuSelection = PRESETMENU_SAVE;
         }
@@ -1106,47 +1402,49 @@ void handleEncoder() {
     }
     else if (displayMode == DISPLAY_MIDI) {
       if (midiMenuSelection == MIDIMENU_BACK) {
-        // Save MIDI settings to flash when exiting menu
-        midiSavePending = true;  // Core 0 will handle flash write
         displayMode = DISPLAY_MENU;
         menuSelection = MENU_MIDI;
       }
-      else if (midiMenuSelection == MIDIMENU_SYNTH) {
+      else if (midiMenuSelection == MIDIMENU_MCH) {
         if (!midiEditing) {
           midiEditing = true;
           midiTempValue = midiSynthChannel;
         } else {
           midiSynthChannel = midiTempValue;
           midiEditing = false;
+          midiSavePending = true;
         }
       }
-      else if (midiMenuSelection == MIDIMENU_DRUMS) {
+      else if (midiMenuSelection == MIDIMENU_MODE) {
         if (!midiEditing) {
           midiEditing = true;
-          midiTempValue = midiDrumChannel;
+          midiTempValue = sampleModeGlobal ? 2 : (sidModeGlobal ? 1 : 0);
         } else {
-          midiDrumChannel = midiTempValue;
+          uint8_t newMode = midiTempValue;
+          uint8_t curMode = sampleModeGlobal ? 2 : (sidModeGlobal ? 1 : 0);
+          if (newMode != curMode) {
+            modeToggleTarget = newMode;
+            __dmb();
+            modeTogglePending = true;
+          }
           midiEditing = false;
+          midiSavePending = true;
         }
       }
       else if (midiMenuSelection == MIDIMENU_ROUTE) {
         // Route editing: 3-step cycle: NONE -> FROM -> TO -> NONE (apply)
         if (routeEditLevel == ROUTE_EDIT_NONE) {
-          // Start editing - select FROM channel
           routeEditLevel = ROUTE_EDIT_FROM;
           routeFromChannel = 0;
           routeTempTo = midiChannelRemap[0];
         }
         else if (routeEditLevel == ROUTE_EDIT_FROM) {
-          // Move to TO channel selection
           routeEditLevel = ROUTE_EDIT_TO;
-          // routeTempTo already loaded when FROM was selected
         }
         else if (routeEditLevel == ROUTE_EDIT_TO) {
-          // Apply the routing change
           midiChannelRemap[routeFromChannel] = routeTempTo;
           routeEditLevel = ROUTE_EDIT_NONE;
-          // Note: Settings will be saved when exiting MIDI menu via BACK
+          midiSavePending = true;
         }
       }
       else if (midiMenuSelection == MIDIMENU_VIZ) {
@@ -1156,41 +1454,7 @@ void handleEncoder() {
         } else {
           vizMode = midiTempValue;
           midiEditing = false;
-        }
-      }
-      else if (midiMenuSelection == MIDIMENU_SID) {
-        if (!midiEditing) {
-          midiEditing = true;
-          midiTempValue = sidModeGlobal ? 1 : 0;
-        } else {
-          // Apply SID mode change
-          bool newSidMode = (midiTempValue != 0);
-          if (newSidMode != sidModeGlobal) {
-            // Kill all notes first
-            allNotesOffPanic();
-
-            // Reset all voice settings to defaults
-            settingsInit();
-
-            // Reset all effects state (envelopes, vibrato, tremolo, etc.)
-            effectsInit();
-
-            // Reset FX to disabled
-            fxSetEnabled(false);
-
-            // Reset poly mode to full poly (1)
-            polyMode = 1;
-
-            if (newSidMode) {
-              // Entering SID mode
-              sidModeInit();
-            } else {
-              // Exiting SID mode
-              sidModeStop();
-            }
-            sidModeGlobal = newSidMode;
-          }
-          midiEditing = false;
+          midiSavePending = true;
         }
       }
       else if (midiMenuSelection == MIDIMENU_USB) {
@@ -1200,6 +1464,7 @@ void handleEncoder() {
         } else {
           usbMode = midiTempValue;
           midiEditing = false;
+          midiSavePending = true;
         }
       }
       else if (midiMenuSelection == MIDIMENU_BRT) {
@@ -1211,10 +1476,10 @@ void handleEncoder() {
           displayBrightness = (midiTempValue >= 10) ? 255 : (uint8_t)(midiTempValue * 25);
           display.setContrast(displayBrightness);
           midiEditing = false;
+          midiSavePending = true;
         }
       }
       else if (midiMenuSelection == MIDIMENU_POTS) {
-        // Enter pot defaults editing screen
         editingPotDefaults = true;
         displayMode = DISPLAY_POTS;
         potsSelection = 0;
@@ -1227,6 +1492,7 @@ void handleEncoder() {
         } else {
           fxClockSync = (midiTempValue != 0);
           midiEditing = false;
+          midiSavePending = true;
         }
       }
     }

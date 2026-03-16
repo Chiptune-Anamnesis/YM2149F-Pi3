@@ -1,4 +1,5 @@
 #include "sample_player.h"
+#include "settings.h"
 #include "YM2149.h"
 #include "config.h"
 #include "pico/time.h"
@@ -8,89 +9,111 @@
 // External YM2149 instance
 extern YM2149 ym;
 
-// Which chip/voice to use for sample playback
+// Which chip to use for sample playback (all 3 voices)
 #define SAMPLE_CHIP 2
-#define SAMPLE_VOICE 2  // Use voice C on chip 2
 
 // ============================================================================
-// PLAYBACK STATE
+// PLAYBACK STATE — 3 polyphonic voices on chip 2
 // ============================================================================
 
-volatile bool samplePlaying = false;
-volatile uint16_t samplePos = 0;
-volatile const uint8_t* currentSample = nullptr;
-volatile uint16_t currentSampleLen = 0;
+SampleVoice sampleVoices[SAMPLE_VOICE_COUNT] = {};
+uint8_t nextSampleVoice = 0;  // Round-robin for voice stealing
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
+uint8_t sampleSection = SAMPLE_SECTION_DRUMS;
 uint8_t sampleSelect = 0;
 uint8_t sampleMode = SAMPLE_MODE_MAPPED;  // Default to GM drum map
 uint8_t sampleVolume = 15;
 uint8_t sampleSeqIndex = 0;
+volatile uint8_t lastSampleNote = 0;
+
+// Semitone ratios in 8.8 fixed-point (256 = 1.0)
+// Precomputed: round(256 * 2^(n/12)) for n=0..12
+static const uint16_t semitoneTable[13] = {
+  256, 271, 287, 304, 323, 342, 362, 384, 406, 431, 456, 483, 512
+};
+
+// Compute pitch increment from pitch (-12..+12) and octave (-3..+3)
+static uint16_t computePitchIncrement(int8_t pitch, int8_t octave) {
+  uint16_t inc = 256;
+  if (pitch >= 0 && pitch <= 12) {
+    inc = semitoneTable[pitch];
+  } else if (pitch < 0 && pitch >= -12) {
+    inc = (uint16_t)(65536UL / semitoneTable[-pitch]);
+  }
+  if (octave > 0) {
+    inc <<= octave;
+  } else if (octave < 0) {
+    inc >>= (-octave);
+    if (inc == 0) inc = 1;
+  }
+  return inc;
+}
 
 // ============================================================================
-// GM DRUM MAP
-// Maps MIDI notes 35-58 to sample indices 0-23
-// Edit this array to assign your samples to the correct drum sounds
+// GM DRUM MAPS
+// Maps MIDI notes 35-58 to sample indices
 // ============================================================================
-//
-// Sample lengths for reference (shorter = hi-hats, longer = kicks/crashes):
-//   s00=794, s01=741, s02=979, s03=794, s04=952, s05=1058, s06=1111, s07=1429
-//   s08=952, s09=847, s10=1005, s11=952, s12=635, s13=635, s14=847, s15=1058
-//   s16=635, s17=847, s18=211, s19=238, s20=555, s21=211, s22=900, s23=397
-//
-// Default mapping (adjust based on your actual samples):
+
+// Bitkits drum map (section 0)
+// 0-3=Kicks  4-7=Snares  8-10=Closed HH  11-13=Open HH
+// 14-15=Claps  16-18=Toms  19-20=Hand Drums  21=Cowbell  22=Tamb  23=Shaker
 const uint8_t gmDrumMap[24] = {
-  // Note 35: Acoustic Bass Drum -> longest sample (likely kick)
-  7,   // s07 (1429) - Acoustic Bass Drum
-  // Note 36: Bass Drum 1 (Kick)
-  6,   // s06 (1111) - Kick
-  // Note 37: Side Stick
-  23,  // s23 (397) - Side Stick (short click)
-  // Note 38: Acoustic Snare
-  2,   // s02 (979) - Snare
-  // Note 39: Hand Clap
-  12,  // s12 (635) - Clap
-  // Note 40: Electric Snare
-  4,   // s04 (952) - Electric Snare
-  // Note 41: Low Floor Tom
-  5,   // s05 (1058) - Low Tom
-  // Note 42: Closed Hi-Hat
-  18,  // s18 (211) - Closed HH (shortest)
-  // Note 43: High Floor Tom
-  15,  // s15 (1058) - High Floor Tom
-  // Note 44: Pedal Hi-Hat
-  21,  // s21 (211) - Pedal HH (short)
-  // Note 45: Low Tom
-  10,  // s10 (1005) - Low Tom
-  // Note 46: Open Hi-Hat
-  19,  // s19 (238) - Open HH (short with decay)
-  // Note 47: Low-Mid Tom
-  11,  // s11 (952) - Low-Mid Tom
-  // Note 48: Hi-Mid Tom
-  8,   // s08 (952) - Hi-Mid Tom
-  // Note 49: Crash Cymbal 1
-  0,   // s00 (794) - Crash
-  // Note 50: High Tom
-  9,   // s09 (847) - High Tom
-  // Note 51: Ride Cymbal 1
-  1,   // s01 (741) - Ride
-  // Note 52: Chinese Cymbal
-  3,   // s03 (794) - Chinese Cymbal
-  // Note 53: Ride Bell
-  16,  // s16 (635) - Ride Bell
-  // Note 54: Tambourine
-  20,  // s20 (555) - Tambourine
-  // Note 55: Splash Cymbal
-  13,  // s13 (635) - Splash
-  // Note 56: Cowbell
-  17,  // s17 (847) - Cowbell
-  // Note 57: Crash Cymbal 2
-  14,  // s14 (847) - Crash 2
-  // Note 58: Vibraslap
-  22   // s22 (900) - Vibraslap
+  0,   // Note 35: Acoustic Bass Drum → KCK1
+  1,   // Note 36: Bass Drum 1       → KCK2
+  20,  // Note 37: Side Stick        → PRC2 (short perc)
+  4,   // Note 38: Acoustic Snare    → SNR1
+  14,  // Note 39: Hand Clap         → CLP1
+  5,   // Note 40: Electric Snare    → SNR2
+  16,  // Note 41: Low Floor Tom     → TOM1 (low)
+  8,   // Note 42: Closed Hi-Hat     → CHH1
+  17,  // Note 43: High Floor Tom    → TOM2 (mid)
+  9,   // Note 44: Pedal Hi-Hat      → CHH2
+  16,  // Note 45: Low Tom           → TOM1 (low)
+  11,  // Note 46: Open Hi-Hat       → OHH1
+  17,  // Note 47: Low-Mid Tom       → TOM2 (mid)
+  18,  // Note 48: Hi-Mid Tom        → TOM3 (high)
+  12,  // Note 49: Crash Cymbal 1    → OHH2
+  18,  // Note 50: High Tom          → TOM3 (high)
+  13,  // Note 51: Ride Cymbal 1     → OHH3
+  13,  // Note 52: Chinese Cymbal    → OHH3
+  21,  // Note 53: Ride Bell         → CWBL
+  22,  // Note 54: Tambourine        → TAMB
+  10,  // Note 55: Splash Cymbal     → CHH3
+  21,  // Note 56: Cowbell           → CWBL
+  12,  // Note 57: Crash Cymbal 2    → OHH2
+  23   // Note 58: Vibraslap         → SHKR
+};
+
+// Legacy DigiDrum map (section 2, 16 samples)
+const uint8_t gmDrumMapLegacy[24] = {
+  11,  // Note 35: Acoustic Bass Drum → Hard Kick
+  4,   // Note 36: Bass Drum 1       → Kick
+  12,  // Note 37: Side Stick        → Tap
+  2,   // Note 38: Acoustic Snare    → Short Snare
+  6,   // Note 39: Hand Clap         → Hard Clap
+  15,  // Note 40: Electric Snare    → Hard Snare
+  14,  // Note 41: Low Floor Tom     → Reg Kick
+  3,   // Note 42: Closed Hi-Hat     → Muted Snare
+  0,   // Note 43: High Floor Tom    → Short Kick
+  12,  // Note 44: Pedal Hi-Hat      → Tap
+  10,  // Note 45: Low Tom           → Short Kick
+  3,   // Note 46: Open Hi-Hat       → Muted Snare
+  5,   // Note 47: Low-Mid Tom       → S05
+  0,   // Note 48: Hi-Mid Tom        → Short Kick
+  8,   // Note 49: Crash Cymbal 1    → Laser
+  1,   // Note 50: High Tom          → Light Kick
+  7,   // Note 51: Ride Cymbal 1     → Short Laser
+  8,   // Note 52: Chinese Cymbal    → Laser
+  13,  // Note 53: Ride Bell         → S13
+  3,   // Note 54: Tambourine        → Muted Snare
+  7,   // Note 55: Splash Cymbal     → Short Laser
+  9,   // Note 56: Cowbell           → Voice Sample
+  8,   // Note 57: Crash Cymbal 2    → Laser
+  9    // Note 58: Vibraslap         → Voice Sample
 };
 
 // ============================================================================
@@ -100,45 +123,52 @@ const uint8_t gmDrumMap[24] = {
 repeating_timer_t sampleTimer;
 volatile bool sampleTimerActive = false;
 
-// Timer callback - called at 4000 Hz continuously
-// Like the original Arduino code, this runs always and checks for active sample
+// Timer callback - called at 8000 Hz continuously
+// Processes all 3 sample voices on chip 2 with pitch control
+// 3 writeFast calls × ~25µs = 75µs, fits within 125µs period
 bool sampleTimerCallback(repeating_timer_t *rt) {
-  if (!samplePlaying) {
-    return true;  // Keep timer running, but do nothing
-  }
+  // Quick exit if no voices active
+  bool anyActive = sampleVoices[0].playing ||
+                   sampleVoices[1].playing ||
+                   sampleVoices[2].playing;
+  if (!anyActive) return true;
 
-  // Atomic check-and-set of ymBusBusy to prevent bus collisions
+  // Try to acquire bus — skip this tick if busy (preserves timing)
   uint32_t irq = save_and_disable_interrupts();
   if (ymBusBusy) { restore_interrupts(irq); return true; }
   ymBusBusy = true;
   restore_interrupts(irq);
 
-  uint16_t pos = samplePos;
-  const uint8_t* sample = (const uint8_t*)currentSample;
+  ym.selectYM(SAMPLE_CHIP);
 
-  if (sample != nullptr && pos < currentSampleLen) {
-    // Read sample value directly from flash (0 or 15)
-    uint8_t val = sample[pos];
-    samplePos = pos + 1;
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    if (!sampleVoices[v].playing) continue;
 
-    // Scale by volume if sample value is non-zero
-    if (val > 0) {
-      val = sampleVolume;
+    // Fixed-point position: upper bits = actual sample index
+    uint32_t fixedPos = sampleVoices[v].pos;
+    uint16_t actualPos = fixedPos >> 8;
+    const uint8_t* sample = (const uint8_t*)sampleVoices[v].data;
+
+    if (sample == nullptr || actualPos >= sampleVoices[v].length) {
+      // Sample finished — silence this voice
+      sampleVoices[v].playing = false;
+      ym.writeFast(8 + v, 0);
+      continue;
     }
 
-    // Fast write: select chip 2 (minimal delay since SEL_B=LOW is reliable)
-    // then use writeFast which skips the long chip settling delays
-    ym.selectYM(SAMPLE_CHIP);
-    ym.writeFast(8 + SAMPLE_VOICE, val);
-  } else {
-    // Sample finished
-    samplePlaying = false;
-    ym.selectYM(SAMPLE_CHIP);
-    ym.writeFast(8 + SAMPLE_VOICE, 0);
+    // Read sample byte at current position
+    uint8_t val = sample[actualPos];
+
+    // Advance position by per-voice pitch increment (8.8 fixed-point)
+    sampleVoices[v].pos = fixedPos + sampleVoices[v].pitchIncrement;
+
+    // Scale 8-bit (0-255) to 4-bit YM volume (0-15), weighted by sampleVolume
+    val = ((uint16_t)val * sampleVolume) >> 8;
+    ym.writeFast(8 + v, val);
   }
 
   ymBusBusy = false;
-  return true;  // Always keep timer running
+  return true;
 }
 
 // ============================================================================
@@ -146,23 +176,32 @@ bool sampleTimerCallback(repeating_timer_t *rt) {
 // ============================================================================
 
 void samplePlayerInit() {
-  samplePlaying = false;
-  samplePos = 0;
-  currentSample = nullptr;
-  currentSampleLen = 0;
+  // Clear all voice state
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    sampleVoices[v].playing = false;
+    sampleVoices[v].pos = 0;
+    sampleVoices[v].data = nullptr;
+    sampleVoices[v].length = 0;
+    sampleVoices[v].pitchIncrement = 256;  // Default 1.0x speed
+    sampleVoices[v].note = 0;
+    sampleVoices[v].sampleIdx = 0;
+    ym.write(SAMPLE_CHIP, 8 + v, 0);  // Silence
+  }
+  nextSampleVoice = 0;
 
+  // Disable tone and noise for all voices on chip 2
+  // Pure volume-register PCM output
+  ym.write(SAMPLE_CHIP, 0x07, 0b00111111);
+
+  sampleSection = SAMPLE_SECTION_DRUMS;
   sampleSelect = 0;
-  sampleMode = SAMPLE_MODE_MAPPED;  // Use GM drum map by default
+  sampleMode = SAMPLE_MODE_MAPPED;
   sampleVolume = 15;
   sampleSeqIndex = 0;
 
-  // Set up sample voice - silence initially
-  ym.write(SAMPLE_CHIP, 8 + SAMPLE_VOICE, 0);
-
-  // Start the sample timer - runs continuously at 4000 Hz like the original code
-  // This avoids timing glitches from starting/stopping the timer
+  // Start the sample timer - runs continuously at 8000 Hz
   sampleTimerActive = true;
-  add_repeating_timer_us(-250, sampleTimerCallback, NULL, &sampleTimer);
+  add_repeating_timer_us(-125, sampleTimerCallback, NULL, &sampleTimer);
 }
 
 // ============================================================================
@@ -171,6 +210,8 @@ void samplePlayerInit() {
 
 void sampleTrigger(uint8_t note, uint8_t velocity) {
   uint8_t sampleIdx = 0;
+  const SampleInfo* sectionSamples = getSectionSamples(sampleSection);
+  uint8_t sectionCount = getSectionSampleCount(sampleSection);
 
   // Select sample based on mode
   switch (sampleMode) {
@@ -180,23 +221,31 @@ void sampleTrigger(uint8_t note, uint8_t velocity) {
 
     case SAMPLE_MODE_SEQ:
       sampleIdx = sampleSeqIndex;
-      sampleSeqIndex = (sampleSeqIndex + 1) % SAMPLE_COUNT;
+      sampleSeqIndex = (sampleSeqIndex + 1) % sectionCount;
       break;
 
     case SAMPLE_MODE_RANDOM:
-      sampleIdx = random(SAMPLE_COUNT);
+      sampleIdx = random(sectionCount);
       break;
 
     case SAMPLE_MODE_MAPPED:
-      // GM drum map - MIDI notes 35-58 mapped via gmDrumMap[]
-      if (note >= GM_DRUM_NOTE_MIN && note <= GM_DRUM_NOTE_MAX) {
-        sampleIdx = gmDrumMap[note - GM_DRUM_NOTE_MIN];
-      } else if (note > GM_DRUM_NOTE_MAX) {
-        // Notes above 58: wrap around the map
-        sampleIdx = gmDrumMap[(note - GM_DRUM_NOTE_MIN) % (GM_DRUM_NOTE_MAX - GM_DRUM_NOTE_MIN + 1)];
+      if (sampleSection == SAMPLE_SECTION_ONESHOTS) {
+        // OneShots: chromatic mapping from C2 (note 36)
+        if (note >= 36 && note < 36 + sectionCount) {
+          sampleIdx = note - 36;
+        } else {
+          sampleIdx = note % sectionCount;
+        }
       } else {
-        // Notes below 35: use first sample
-        sampleIdx = gmDrumMap[0];
+        // Drums or DigiDrum: GM drum map
+        const uint8_t* map = (sampleSection == SAMPLE_SECTION_DRUMS) ? gmDrumMap : gmDrumMapLegacy;
+        if (note >= GM_DRUM_NOTE_MIN && note <= GM_DRUM_NOTE_MAX) {
+          sampleIdx = map[note - GM_DRUM_NOTE_MIN];
+        } else if (note > GM_DRUM_NOTE_MAX) {
+          sampleIdx = map[(note - GM_DRUM_NOTE_MIN) % (GM_DRUM_NOTE_MAX - GM_DRUM_NOTE_MIN + 1)];
+        } else {
+          sampleIdx = map[0];
+        }
       }
       break;
 
@@ -206,28 +255,85 @@ void sampleTrigger(uint8_t note, uint8_t velocity) {
   }
 
   // Bounds check
-  if (sampleIdx >= SAMPLE_COUNT) sampleIdx = 0;
+  if (sampleIdx >= sectionCount) sampleIdx = 0;
 
-  // Disable ALL interrupts (including hardware timers) while updating sample state
-  // noInterrupts() only disables GPIO interrupts on RP2040, not timer interrupts
+  // Track which note/sample triggered (for display and per-sample editing)
+  lastSampleNote = note;
+  sampleSelect = sampleIdx;
+
+  // Voice allocation:
+  // 1. Same sample already playing → retrigger that voice
+  // 2. Free voice available → use it
+  // 3. No free voice → steal oldest (round-robin)
+  int8_t voiceIdx = -1;
+
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    if (sampleVoices[v].playing && sampleVoices[v].sampleIdx == sampleIdx) {
+      voiceIdx = v;
+      break;
+    }
+  }
+  if (voiceIdx < 0) {
+    for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+      if (!sampleVoices[v].playing) {
+        voiceIdx = v;
+        break;
+      }
+    }
+  }
+  if (voiceIdx < 0) {
+    voiceIdx = nextSampleVoice;
+    nextSampleVoice = (nextSampleVoice + 1) % SAMPLE_VOICE_COUNT;
+  }
+
+  // Look up per-sample pitch/octave/length
+  uint8_t flatIdx = sampleFlatIndex(sampleSection, sampleIdx);
+  int8_t pitch = samplePitchArr[flatIdx];
+  int8_t octave = sampleOctaveArr[flatIdx];
+  uint8_t len = sampleLengthArr[flatIdx];
+
+  // Compute effective length based on per-sample length (1-127, 127=full)
+  uint16_t fullLen = sectionSamples[sampleIdx].length;
+  uint16_t effectiveLen = ((uint32_t)fullLen * len) / 127;
+  if (effectiveLen == 0) effectiveLen = 1;
+
+  // Compute per-sample pitch increment
+  uint16_t pInc = computePitchIncrement(pitch, octave);
+
+  // Atomically update voice state
   uint32_t irq = save_and_disable_interrupts();
-
-  // Load sample from lookup table
-  currentSample = samples[sampleIdx].data;
-  currentSampleLen = samples[sampleIdx].length;
-  samplePos = 0;
-
-  // Start playback - timer is already running continuously
-  samplePlaying = true;
-
+  sampleVoices[voiceIdx].data = sectionSamples[sampleIdx].data;
+  sampleVoices[voiceIdx].length = effectiveLen;
+  sampleVoices[voiceIdx].pitchIncrement = pInc;
+  sampleVoices[voiceIdx].pos = 0;  // 8.8 fixed-point, starts at 0.0
+  sampleVoices[voiceIdx].note = note;
+  sampleVoices[voiceIdx].sampleIdx = sampleIdx;
+  sampleVoices[voiceIdx].playing = true;
   restore_interrupts(irq);
 }
 
 void sampleStop() {
-  samplePlaying = false;
-  // Don't stop timer - it runs continuously
-  ym.write(SAMPLE_CHIP, 8 + SAMPLE_VOICE, 0);
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    sampleVoices[v].playing = false;
+    ym.write(SAMPLE_CHIP, 8 + v, 0);
+  }
 }
+
+void sampleModeEnter() {
+  sampleStop();
+  // Disable tone+noise on all chip 2 voices (pure volume-register PCM)
+  ym.write(SAMPLE_CHIP, 0x07, 0b00111111);
+}
+
+void sampleModeExit() {
+  sampleStop();
+  // Restore chip 2 mixer to normal (tones enabled, noise off)
+  ym.write(SAMPLE_CHIP, 0x07, 0b00111000);
+}
+
+// sampleUpdatePitchIncrement() — kept as no-op for API compatibility
+// Pitch increments are now computed per-sample at trigger time
+void sampleUpdatePitchIncrement() {}
 
 // ============================================================================
 // HELPERS
@@ -243,33 +349,3 @@ const char* getSampleModeName(uint8_t mode) {
   }
 }
 
-// ============================================================================
-// SAMPLE LOOKUP TABLE
-// ============================================================================
-
-const SampleInfo samples[SAMPLE_COUNT] = {
-  { s00, s00_len },
-  { s01, s01_len },
-  { s02, s02_len },
-  { s03, s03_len },
-  { s04, s04_len },
-  { s05, s05_len },
-  { s06, s06_len },
-  { s07, s07_len },
-  { s08, s08_len },
-  { s09, s09_len },
-  { s10, s10_len },
-  { s11, s11_len },
-  { s12, s12_len },
-  { s13, s13_len },
-  { s14, s14_len },
-  { s15, s15_len },
-  { s16, s16_len },
-  { s17, s17_len },
-  { s18, s18_len },
-  { s19, s19_len },
-  { s20, s20_len },
-  { s21, s21_len },
-  { s22, s22_len },
-  { s23, s23_len }
-};

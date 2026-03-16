@@ -108,7 +108,22 @@ static void noteOnSid(uint8_t ch, uint8_t note, uint8_t vel) {
   voiceNote[chip][v] = note;
   voiceChan[chip][v] = ch;
   voiceVol[chip][v] = volume;
-  curPeriod[chip][v] = (float)period;
+
+  // Portamento-aware curPeriod initialization
+  uint8_t settingsIdx = chip * 3 + v;
+  float detuneSemi = voiceSettings[settingsIdx].detuneCents / 100.0f;
+  float octaveSemi = voiceSettings[settingsIdx].octaveShift * 12.0f;
+  float modifiedP = (float)period / fastPow2Semi(detuneSemi + octaveSemi);
+
+  if (portamentoOn[ch] || voiceSettings[settingsIdx].portaOn) {
+    if (lastPortaPeriod[ch] > 0) {
+      curPeriod[chip][v] = lastPortaPeriod[ch];
+    } else {
+      curPeriod[chip][v] = modifiedP;
+    }
+  } else {
+    curPeriod[chip][v] = (float)period;
+  }
 
   // Initialize effect state for this voice
   vibPhase[voiceIdx] = 0;
@@ -133,6 +148,9 @@ static void noteOnSid(uint8_t ch, uint8_t note, uint8_t vel) {
 
   // Apply envelope scaling immediately (prevents timer writing unscaled volume)
   updatePitchMod(ch);
+
+  // Remember this note's period for next portamento glide
+  lastPortaPeriod[ch] = modifiedP;
 
   // Track note for note-off matching
   sidVoiceNote[targetVoice] = note;

@@ -88,9 +88,9 @@ static bool readUserPreset(uint8_t userSlot, PresetData& p) {
 // Static buffer to avoid stack overflow (4KB is too much for stack)
 static uint8_t flashBuffer[PRESET_SECTOR_SIZE];
 
-// Write data to flash (must be called from Core 0)
-// Uses cooperative pause to ensure Core 1 is not in I2C transaction
-// Handles non-sector-aligned writes by reading entire sector first
+// Write data to flash. Called from Core 1 (display core) at a safe point before
+// any I2C operations, so the display is never interrupted mid-transfer.
+// Idles Core 0 (audio core) briefly for the flash erase/program (~20ms).
 void presetWriteFlash(uint32_t offset, const uint8_t* data, size_t len) {
   // Calculate sector-aligned start address (flash erase requires 4KB alignment)
   uint32_t sectorStart = (offset / PRESET_SECTOR_SIZE) * PRESET_SECTOR_SIZE;
@@ -98,19 +98,18 @@ void presetWriteFlash(uint32_t offset, const uint8_t* data, size_t len) {
 
   uint32_t flash_offset = PRESET_FLASH_BASE - XIP_BASE + sectorStart;
 
-  // Stop SID timer if in SID mode (prevents timer corruption during flash operations)
+  // Pause SID timer if in SID mode (flag-based — callback skips work)
+  // Using pause/resume instead of stop/start to avoid timer ownership issues
+  // (stop/start would recreate the timer on the calling core)
   bool wasInSidMode = sidModeGlobal && sidTimerActive;
   if (wasInSidMode) {
-    // Stop timer first (prevents new callbacks)
-    sidTimerStop();
+    sidTimerPause();
 
     // Wait for any in-progress callback to finish
     unsigned long busWaitStart = millis();
     while (ymBusBusy && (millis() - busWaitStart < 100)) {
       delayMicroseconds(10);
     }
-
-    // Additional delay to ensure timer fully stopped
     delay(5);
   }
 
@@ -121,69 +120,38 @@ void presetWriteFlash(uint32_t offset, const uint8_t* data, size_t len) {
   // Modify only our portion
   memcpy(flashBuffer + offsetInSector, data, len);
 
-  // ===== COOPERATIVE PAUSE MECHANISM =====
   if (core1Running) {
-    // Step 1: Request Core 1 to pause at a safe point (between display updates)
-    flashPauseRequested = true;
-    __dmb();  // Ensure Core 1 sees flashPauseRequested before we check core1Paused
+    // Signal Core 0 to enter flash-safe RAM loop
+    flashWriteInProgress = true;
+    __dmb();
 
-    // Step 2: Wait for Core 1 to reach its safe pause point
-    // Core 1 will set core1Paused=true when it's NOT in the middle of I2C
-    unsigned long waitStart = millis();
-    while (!core1Paused) {
-      // Timeout after 500ms to avoid infinite hang
-      if (millis() - waitStart > 500) {
-        // Core 1 didn't respond - proceed anyway (last resort)
-        break;
-      }
-      delayMicroseconds(100);
+    // Wait for Core 0 to be safely in RAM with interrupts disabled
+    while (!core0InRAM) {
+      tight_loop_contents();
     }
-    bool forcedIdle = !core1Paused;  // Track if we hit timeout
 
-    // Step 3: Now Core 1 is safely paused in a busy-wait loop
-    // It's safe to call idleOtherCore because Core 1 is at a known point
+    // Both cores safe — do flash operation
     noInterrupts();
-    rp2040.idleOtherCore();
-
-    // Erase sector (4KB) at aligned address
     flash_range_erase(flash_offset, PRESET_SECTOR_SIZE);
-
-    // Write entire sector back
     flash_range_program(flash_offset, flashBuffer, PRESET_SECTOR_SIZE);
-
-    // If we forcibly idled Core 1 mid-I2C, reinit the bus BEFORE resuming Core 1
-    // to avoid a race where Core 1 resumes into a corrupt I2C state
-    if (forcedIdle) {
-      Wire1.end();
-      Wire1.setSDA(PIN_OLED_SDA);
-      Wire1.setSCL(PIN_OLED_SCL);
-      Wire1.begin();
-      displayNeedsReinit = true;  // Tell Core 1 to reinit display on next loop
-      __dmb();  // Ensure displayNeedsReinit is visible before resuming Core 1
-    }
-
-    // Resume other core
-    rp2040.resumeOtherCore();
     interrupts();
 
-    // Step 4: Signal Core 1 it can continue
-    flashPauseRequested = false;
-    __dmb();  // Ensure Core 1 sees flashPauseRequested=false
+    // Release Core 0
+    flashWriteInProgress = false;
+    __dmb();
 
-    // Give Core 1 a moment to resume before we continue
     delay(10);
   } else {
-    // Core 1 not running yet (boot-time flash write) - no pause needed
+    // Boot-time: Core 1 not running yet, no sync needed
     noInterrupts();
     flash_range_erase(flash_offset, PRESET_SECTOR_SIZE);
     flash_range_program(flash_offset, flashBuffer, PRESET_SECTOR_SIZE);
     interrupts();
   }
 
-  // Restart SID timer if it was running before flash operations
-  // Do this AFTER Core 1 has resumed to avoid any race conditions
+  // Resume SID timer if it was paused (stays on Core 0, no ownership change)
   if (wasInSidMode) {
-    sidTimerStart();
+    sidTimerResume();
   }
 }
 
@@ -214,18 +182,19 @@ void presetInit() {
       settings.magic = SETTINGS_MAGIC;
       settings.version = SETTINGS_VERSION;
       settings.midiSynthChannel = oldHeader.midiSynthChannel;
-      settings.midiDrumChannel = oldHeader.midiDrumChannel;
+      settings.sampleModeGlobal = 0;  // No sample mode in legacy
       settings.usbMode = oldHeader.usbMode;
       settings.activePreset = PRESET_INDEX_NONE;
       settings.vizMode = VIZ_MODE_BARS;
       settings.sidModeGlobal = 0;  // YM mode by default
       memset(settings.midiChannelRemap, MIDI_REMAP_NONE, 16);  // No remapping
-      settings.sidDutyChip[0] = 8;  // 50% duty for chip 1
-      settings.sidDutyChip[1] = 8;  // 50% duty for chip 2
+      settings.sidDutyChip[0] = 11;
+      settings.sidDutyChip[1] = 11;
       settings.displayBrightness = DISPLAY_BRIGHTNESS_DEFAULT;
       settings.potDefaults[0] = { PCAT_ENVELOPE, 1, TARGET_ALL, 0 };
       settings.potDefaults[1] = { PCAT_ENVELOPE, 2, TARGET_ALL, 0 };
       settings.potDefaults[2] = { PCAT_ENVELOPE, 3, TARGET_ALL, 0 };
+      settings.clkSync = 0;
       memset(settings.reserved, 0, sizeof(settings.reserved));
       needsSave = true;
     } else {
@@ -233,18 +202,19 @@ void presetInit() {
       settings.magic = SETTINGS_MAGIC;
       settings.version = SETTINGS_VERSION;
       settings.midiSynthChannel = MIDI_CHANNEL_OMNI;
-      settings.midiDrumChannel = 9;
+      settings.sampleModeGlobal = 0;
       settings.usbMode = USB_MODE_MIDI;
       settings.activePreset = PRESET_INDEX_NONE;
       settings.vizMode = VIZ_MODE_BARS;
       settings.sidModeGlobal = 0;  // YM mode by default
       memset(settings.midiChannelRemap, MIDI_REMAP_NONE, 16);  // No remapping
-      settings.sidDutyChip[0] = 8;  // 50% duty for chip 1
-      settings.sidDutyChip[1] = 8;  // 50% duty for chip 2
+      settings.sidDutyChip[0] = 11;
+      settings.sidDutyChip[1] = 11;
       settings.displayBrightness = DISPLAY_BRIGHTNESS_DEFAULT;
       settings.potDefaults[0] = { PCAT_ENVELOPE, 1, TARGET_ALL, 0 };
       settings.potDefaults[1] = { PCAT_ENVELOPE, 2, TARGET_ALL, 0 };
       settings.potDefaults[2] = { PCAT_ENVELOPE, 3, TARGET_ALL, 0 };
+      settings.clkSync = 0;
       memset(settings.reserved, 0, sizeof(settings.reserved));
       needsSave = true;
     }
@@ -257,8 +227,8 @@ void presetInit() {
     if (settings.version < 3) {
       // Version 2 -> 3: add sidModeGlobal, sidDutyChip (default off, 50% duty)
       settings.sidModeGlobal = 0;  // YM mode by default
-      settings.sidDutyChip[0] = 8;  // 50% duty for chip 1
-      settings.sidDutyChip[1] = 8;  // 50% duty for chip 2
+      settings.sidDutyChip[0] = 11;
+      settings.sidDutyChip[1] = 11;
     }
     if (settings.version < 4) {
       // Version 3 -> 4: add displayBrightness
@@ -274,6 +244,10 @@ void presetInit() {
       // Version 5 -> 6: add MIDI clock sync
       settings.clkSync = 0;
     }
+    if (settings.version < 7) {
+      // Version 6 -> 7: replace midiDrumChannel with sampleModeGlobal
+      settings.sampleModeGlobal = 0;  // Default to off
+    }
     settings.version = SETTINGS_VERSION;
     needsSave = true;
   }
@@ -288,9 +262,7 @@ void presetInit() {
       settings.midiSynthChannel == MIDI_CHANNEL_OMNI) {
     midiSynthChannel = settings.midiSynthChannel;
   }
-  if (settings.midiDrumChannel <= 15 || settings.midiDrumChannel == MIDI_CHANNEL_OFF) {
-    midiDrumChannel = settings.midiDrumChannel;
-  }
+  sampleModeGlobal = (settings.sampleModeGlobal != 0);
   if (settings.usbMode <= USB_MODE_SERIAL) {
     usbMode = settings.usbMode;
   }
@@ -300,8 +272,8 @@ void presetInit() {
   // Load global SID mode settings
   sidModeGlobal = (settings.sidModeGlobal != 0);
   // Load per-chip duty cycles (clamp to 0-15)
-  sidDutyChip[0] = (settings.sidDutyChip[0] <= 15) ? settings.sidDutyChip[0] : 8;
-  sidDutyChip[1] = (settings.sidDutyChip[1] <= 15) ? settings.sidDutyChip[1] : 8;
+  sidDutyChip[0] = (settings.sidDutyChip[0] <= 15) ? settings.sidDutyChip[0] : 11;
+  sidDutyChip[1] = (settings.sidDutyChip[1] <= 15) ? settings.sidDutyChip[1] : 11;
   // Load MIDI channel routing
   for (uint8_t i = 0; i < 16; i++) {
     midiChannelRemap[i] = settings.midiChannelRemap[i];
@@ -385,10 +357,16 @@ void presetCaptureCurrent(PresetData& p) {
   p.sidEnvShape = sidEnvShape;
 
   // Sample player
+  p.sampleSection = sampleSection;
   p.sampleSelect = sampleSelect;
   p.sampleMode = sampleMode;
   p.sampleVolume = sampleVolume;
   p.sampleSeqIndex = sampleSeqIndex;
+
+  // Per-sample pitch + length
+  memcpy(p.samplePitchArr, samplePitchArr, TOTAL_SAMPLE_COUNT);
+  memcpy(p.sampleOctaveArr, sampleOctaveArr, TOTAL_SAMPLE_COUNT);
+  memcpy(p.sampleLengthArr, sampleLengthArr, TOTAL_SAMPLE_COUNT);
 
   // Global
   p.polyMode = polyMode;
@@ -465,10 +443,20 @@ void presetApplyCurrent(const PresetData& p) {
   sidEnvShape = p.sidEnvShape;
 
   // Sample player
+  sampleSection = p.sampleSection;
+  if (sampleSection >= SAMPLE_SECTION_COUNT) sampleSection = 0;
   sampleSelect = p.sampleSelect;
+  { uint8_t cnt = getSectionSampleCount(sampleSection);
+    if (sampleSelect >= cnt) sampleSelect = 0;
+  }
   sampleMode = p.sampleMode;
   sampleVolume = p.sampleVolume;
   sampleSeqIndex = p.sampleSeqIndex;
+
+  // Per-sample pitch + length
+  memcpy(samplePitchArr, p.samplePitchArr, TOTAL_SAMPLE_COUNT);
+  memcpy(sampleOctaveArr, p.sampleOctaveArr, TOTAL_SAMPLE_COUNT);
+  memcpy(sampleLengthArr, p.sampleLengthArr, TOTAL_SAMPLE_COUNT);
 
   // Global
   polyMode = p.polyMode;
@@ -635,7 +623,7 @@ void saveGlobalSettings() {
   s.magic = SETTINGS_MAGIC;
   s.version = SETTINGS_VERSION;
   s.midiSynthChannel = midiSynthChannel;
-  s.midiDrumChannel = midiDrumChannel;
+  s.sampleModeGlobal = sampleModeGlobal ? 1 : 0;
   s.usbMode = usbMode;
   s.activePreset = currentPresetIndex;
   s.vizMode = vizMode;
@@ -867,5 +855,113 @@ uint8_t sidPresetGetTotalCount() {
     }
   }
 
+  return count;
+}
+
+// ============================================================================
+// SMPL PRESET FUNCTIONS
+// ============================================================================
+
+uint8_t currentSmplPreset = 0xFF;  // No SMPL preset loaded
+
+// Read user SMPL presets from flash
+static void readUserSmplPresets(SmplPreset* presets) {
+  const uint8_t* flashData = (const uint8_t*)(PRESET_FLASH_BASE + SMPL_PRESET_FLASH_OFFSET);
+  memcpy(presets, flashData, sizeof(SmplPreset) * SMPL_PRESET_USER_COUNT);
+}
+
+// Load SMPL preset by index (0-15 = user, no factory presets)
+bool smplPresetLoad(uint8_t presetIndex) {
+  if (presetIndex >= SMPL_PRESET_USER_COUNT) return false;
+
+  static SmplPreset userPresets[SMPL_PRESET_USER_COUNT];
+  readUserSmplPresets(userPresets);
+
+  if (!(userPresets[presetIndex].flags & SMPL_PRESET_FLAG_USED)) return false;
+  if (userPresets[presetIndex].version != SMPL_PRESET_VERSION) return false;
+
+  const SmplPreset& p = userPresets[presetIndex];
+
+  // Apply per-sample arrays
+  memcpy(samplePitchArr, p.pitchArr, TOTAL_SAMPLE_COUNT);
+  memcpy(sampleOctaveArr, p.octaveArr, TOTAL_SAMPLE_COUNT);
+  memcpy(sampleLengthArr, p.lengthArr, TOTAL_SAMPLE_COUNT);
+
+  // Apply global sample settings
+  sampleMode = p.sampleMode;
+  sampleVolume = p.sampleVolume;
+
+  currentSmplPreset = presetIndex;
+  return true;
+}
+
+// Save current SMPL settings to user slot (0-15)
+bool smplPresetSaveUser(uint8_t userSlot, const char* name) {
+  if (userSlot >= SMPL_PRESET_USER_COUNT) return false;
+
+  static SmplPreset userPresets[SMPL_PRESET_USER_COUNT];
+  readUserSmplPresets(userPresets);
+
+  SmplPreset newPreset;
+  memset(&newPreset, 0, sizeof(SmplPreset));
+  strncpy(newPreset.name, name, SMPL_PRESET_NAME_LEN);
+  newPreset.version = SMPL_PRESET_VERSION;
+  newPreset.flags = SMPL_PRESET_FLAG_USED;
+  newPreset.sampleMode = sampleMode;
+  newPreset.sampleVolume = sampleVolume;
+  memcpy(newPreset.pitchArr, samplePitchArr, TOTAL_SAMPLE_COUNT);
+  memcpy(newPreset.octaveArr, sampleOctaveArr, TOTAL_SAMPLE_COUNT);
+  memcpy(newPreset.lengthArr, sampleLengthArr, TOTAL_SAMPLE_COUNT);
+
+  userPresets[userSlot] = newPreset;
+  presetWriteFlash(SMPL_PRESET_FLASH_OFFSET, (const uint8_t*)userPresets, sizeof(userPresets));
+
+  currentSmplPreset = userSlot;
+  return true;
+}
+
+// Delete user SMPL preset
+bool smplPresetDeleteUser(uint8_t userSlot) {
+  if (userSlot >= SMPL_PRESET_USER_COUNT) return false;
+
+  static SmplPreset userPresets[SMPL_PRESET_USER_COUNT];
+  readUserSmplPresets(userPresets);
+
+  memset(&userPresets[userSlot], 0xFF, sizeof(SmplPreset));
+  presetWriteFlash(SMPL_PRESET_FLASH_OFFSET, (const uint8_t*)userPresets, sizeof(userPresets));
+
+  if (currentSmplPreset == userSlot) currentSmplPreset = 0xFF;
+  return true;
+}
+
+// Check if user SMPL slot is used
+bool smplPresetUserIsUsed(uint8_t userSlot) {
+  if (userSlot >= SMPL_PRESET_USER_COUNT) return false;
+  const SmplPreset* p = (const SmplPreset*)(PRESET_FLASH_BASE + SMPL_PRESET_FLASH_OFFSET);
+  return (p[userSlot].flags & SMPL_PRESET_FLAG_USED) != 0;
+}
+
+// Get SMPL preset name
+void smplPresetGetName(uint8_t presetIndex, char* buf) {
+  if (presetIndex < SMPL_PRESET_USER_COUNT) {
+    const SmplPreset* p = (const SmplPreset*)(PRESET_FLASH_BASE + SMPL_PRESET_FLASH_OFFSET);
+    if (p[presetIndex].flags & SMPL_PRESET_FLAG_USED) {
+      memcpy(buf, p[presetIndex].name, SMPL_PRESET_NAME_LEN);
+      buf[SMPL_PRESET_NAME_LEN] = '\0';
+    } else {
+      strcpy(buf, "---");
+    }
+  } else {
+    strcpy(buf, "???");
+  }
+}
+
+// Get total SMPL preset count (used user slots only, no factory)
+uint8_t smplPresetGetTotalCount() {
+  uint8_t count = 0;
+  const SmplPreset* p = (const SmplPreset*)(PRESET_FLASH_BASE + SMPL_PRESET_FLASH_OFFSET);
+  for (uint8_t i = 0; i < SMPL_PRESET_USER_COUNT; i++) {
+    if (p[i].flags & SMPL_PRESET_FLAG_USED) count++;
+  }
   return count;
 }

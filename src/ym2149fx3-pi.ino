@@ -155,6 +155,12 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // If Core 1 needs to write flash, enter RAM-safe spin loop
+  if (flashWriteInProgress) {
+    core0FlashSafeLoop();
+    return;
+  }
+
   // TRS MIDI (UART1 = Serial2)
   while (Serial2.available()) {
     parseSerialMidi(Serial2.read());

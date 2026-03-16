@@ -57,7 +57,7 @@ enum PotCategory : uint8_t {
 #define PCAT_FX_CRUSH_PARAMS 3
 #define PCAT_FX_REVERB_PARAMS 5
 #define PCAT_FX_CHORUS_PARAMS 4
-#define PCAT_SAMPLE_PARAMS 3
+#define PCAT_SAMPLE_PARAMS 6
 #define PCAT_GLOBAL_PARAMS 2
 
 // Target value for "no targeting" (global/FX params)
@@ -139,8 +139,7 @@ extern int potLastValues[3];   // Last values for change detection
 #define MIDI_CHANNEL_OFF  0xFE
 #define MIDI_CHANNEL_OMNI 0xFF
 // Note: volatile required because these are modified by Core 1 (display) and read by Core 0 (MIDI)
-extern volatile uint8_t midiSynthChannel;   // Channel for synth notes (default: OMNI)
-extern volatile uint8_t midiDrumChannel;    // Channel for drum/sample trigger (default: 9 = ch 10)
+extern volatile uint8_t midiSynthChannel;   // MIDI channel for active mode (default: OMNI)
 
 // --- MIDI Channel Routing ---
 // Remaps incoming MIDI channels to internal channels before routing decisions.
@@ -157,11 +156,26 @@ extern volatile uint8_t midiChannelRemap[16];
 #define USB_MODE_SERIAL 1
 extern uint8_t usbMode;
 
-// --- Global SID Mode ---
-// When true, device operates as dedicated SID emulator using chips 1+2
-// All 6 voices use volume PWM synthesis instead of YM tone generation
-extern volatile bool sidModeGlobal;
+// --- Device Mode (YM / SID / SMPL) ---
+// Only one mode active at a time
+extern volatile bool sidModeGlobal;    // SID emulator mode (chips 1+2)
+extern volatile bool sampleModeGlobal; // Sample playback mode (chip 2, 3 voices)
 extern uint8_t sidDutyChip[2];  // Per-chip duty cycle: [0]=chip1, [1]=chip2 (0-15)
+
+// --- Per-Sample Pitch + Length ---
+// Each of the 64 samples (24 drums + 24 oneshots + 16 digi) has independent settings
+#define TOTAL_SAMPLE_COUNT 64
+
+extern int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT];   // -12 to +12 semitones per sample
+extern int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT];   // -3 to +3 octave shift per sample
+extern uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];   // 1-127 playback length per sample
+
+// Convert (section, sampleIdx) to flat array index
+inline uint8_t sampleFlatIndex(uint8_t section, uint8_t idx) {
+  if (section == 0) return idx;          // 0-23  (drums)
+  if (section == 1) return 24 + idx;     // 24-47 (oneshots)
+  return 48 + idx;                        // 48-63 (digi)
+}
 
 // --- Display Brightness ---
 #define DISPLAY_BRIGHTNESS_DEFAULT 200

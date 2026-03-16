@@ -49,7 +49,7 @@ uint8_t sidEnvShape = 0b1110;  // Triangle
 SidVoiceState sidState[6] = {{0}};
 
 // Duty cycle: 0-15 (0=thin pulse ~6%, 8=50% square, 15=thick pulse ~94%)
-volatile uint8_t sidDuty = 8;
+volatile uint8_t sidDuty = 11;
 
 // ============================================================================
 // LEGACY STATE (kept for compatibility during transition)
