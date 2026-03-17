@@ -62,9 +62,8 @@ Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, 
 - USB-MIDI and TRS-MIDI (Serial1 at 31250 baud) simultaneously
 - MIDI channel filtering (per-channel, OMNI, or OFF)
 - Channel remapping (route any incoming channel to any internal channel)
-- CC support: Mod Wheel (CC1), Volume (CC7), Expression (CC11), Portamento (CC5/CC65), All Notes Off (CC123), Reset All Controllers (CC121)
-- CC4 volume envelope shaping (optional)
-- Pitch bend
+- 74 MIDI CC mappings covering voice, envelope, tremolo, FX, sample, and link controls — see [MIDI CC Map](MIDI_CC_MAP.md)
+- Pitch bend (synth and sample modes)
 - MIDI Real-Time: Start (0xFA), Continue (0xFB), Stop (0xFC) with proper note/controller reset
 - MIDI clock sync
 - Note range: A-1 to C8 (MIDI notes 9-108)
@@ -142,26 +141,6 @@ PlatformIO project targeting `rpipico` with the `earlephilhower/arduino-pico` fr
 pio run -e pico
 pio run -e pico -t upload
 ```
-
-## Version History
-
-### Recent Changes
-- **3-Section Sample System** — Added 48 new Bitkits samples (24 drums + 24 one-shots) alongside the original 16 DigiDrum samples. Selectable via SECT in SMPL settings
-- **GM Drum Mapping** — Per-section GM drum maps for Bitkits and DigiDrum. OneShots use chromatic mapping from C2
-- **Sample Names** — 4-character display names for all samples (KCK1, SNR2, BLP1, DD05, etc.)
-- **SID Portamento Fix** — Glide/portamento now works correctly in SID mode (was previously broken due to missing `lastPortaPeriod` initialization in `noteOnSid()`)
-- **Sample Pitch/Length** — Octave shift, semitone fine-tune, and variable sample length controls
-
-### Stability Fixes (v1.49)
-- Fixed array bounds violation on MIDI channels 11-16
-- Fixed division by zero in laser mode causing stuck notes
-- Fixed portamento speed scaling (CC5 was inverted)
-- Fixed note range validation for out-of-bounds MIDI notes
-- Fixed LED polarity (were inverted)
-- Fixed noise channel cleanup on MIDI Stop
-- Simplified noiseOff() to just mute volume
-
----
 
 ## Tips for Musicians
 
