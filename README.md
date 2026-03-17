@@ -1,6 +1,6 @@
 # YM2149Fx3 MIDI Synthesizer
 
-Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design — powered by RP2040 (Raspberry Pi Pico).
+Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design - powered by RP2040 (Raspberry Pi Pico).
 
 ## Features
 
