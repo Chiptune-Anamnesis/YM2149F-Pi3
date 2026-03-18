@@ -212,6 +212,9 @@ void samplePlayerInit() {
   }
   nextSampleVoice = 0;
 
+  // Don't set mixer here - sampleModeEnter() handles it when sample mode is activated
+  // Setting it here would overwrite enableTones() and kill chip 2 tone output on boot
+
   sampleSection = SAMPLE_SECTION_DRUMS;
   sampleSelect = 0;
   sampleMode = SAMPLE_MODE_MAPPED;
