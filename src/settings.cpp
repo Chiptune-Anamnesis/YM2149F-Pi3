@@ -469,6 +469,7 @@ void applySidDuty(uint8_t duty) {
         restore_interrupts(irq);
       }
       sidState[sidIdx].duty = duty;
+      sidState[sidIdx].dutyThreshold = (uint16_t)duty << 12;
       ymBusBusy = false;
     }
   }

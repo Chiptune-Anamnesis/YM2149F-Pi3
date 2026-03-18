@@ -2,13 +2,20 @@
 #include "settings.h"  // For sidModeGlobal, sidDutyChip
 #include "YM2149.h"
 #include "hardware/timer.h"  // For time_us_32()
+#include "hardware/irq.h"    // For irq_set_exclusive_handler()
 #include <hardware/sync.h>   // For save_and_disable_interrupts()
+
+// Use hardware alarm 1 directly (alarm 3 = default alarm pool for repeating_timer)
+// This keeps the entire ISR path in RAM, avoiding XIP flash cache jitter
+#define SID_ALARM_NUM 1
+#define SID_ALARM_IRQ TIMER_IRQ_1
 
 // Which chip to update this callback (alternates 1 and 2 in global mode)
 static uint8_t currentSidChip = 1;
 
-// Phase compensation: track last callback time to handle missed intervals
-static uint32_t lastCallbackTime = 0;
+// Per-chip phase compensation: tracks time since each chip was last updated
+// Prevents inter-chip drift when callbacks are skipped due to ymBusBusy
+static uint32_t lastChipTime[2] = {0};  // [0]=chip1, [1]=chip2
 
 // Run timing-critical functions from RAM to avoid Flash bus contention
 #define RAM_FUNC __attribute__((section(".time_critical")))
@@ -66,7 +73,6 @@ volatile uint8_t sidVoiceVol[3][3] = {{0}};
 volatile bool sidVoiceOn[3][3] = {{false}};
 volatile bool ymBusBusy = false;
 
-struct repeating_timer sidTimer;
 volatile bool sidTimerActive = false;
 volatile bool sidTimerPauseRequested = false;  // Used by Core 1 to pause timer during flash reads
 
@@ -219,24 +225,21 @@ void sidVoiceStop(uint8_t voice) {
 // TIMER CALLBACK - NextSID-style synchronized volume flipping
 // ============================================================================
 
-RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
+RAM_FUNC void sidTimerISR() {
+  // Clear the hardware alarm interrupt and reschedule immediately
+  hw_clear_bits(&timer_hw->intr, 1u << SID_ALARM_NUM);
+  timer_hw->alarm[SID_ALARM_NUM] = timer_hw->timerawl + SID_TIMER_INTERVAL_US;
+
   // Check if pause is requested (for flash reads from Core 1)
-  if (sidTimerPauseRequested) return true;
+  if (sidTimerPauseRequested) return;
 
   // Atomic check-and-set of ymBusBusy to prevent TOCTOU race
   uint32_t irq = save_and_disable_interrupts();
-  if (ymBusBusy) { restore_interrupts(irq); return true; }
+  if (ymBusBusy) { restore_interrupts(irq); return; }
   ymBusBusy = true;
   restore_interrupts(irq);
 
-  // Phase compensation: calculate how many intervals elapsed since last callback
-  // This corrects for skipped callbacks (when ymBusBusy blocked us)
   uint32_t now = time_us_32();
-  uint32_t elapsed = now - lastCallbackTime;
-  lastCallbackTime = now;
-  uint8_t steps = elapsed / SID_TIMER_INTERVAL_US;
-  if (steps < 1) steps = 1;
-  if (steps > 10) steps = 10;  // Cap to avoid huge jumps on first call or long pauses
 
   if (sidModeGlobal) {
     // Global SID mode: round-robin between chips 1 and 2
@@ -244,7 +247,15 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
     // This gives each voice a 40µs update rate (25kHz)
     ym.selectYM(currentSidChip);
 
-    uint8_t chipOffset = (currentSidChip - 1) * 3;  // 0 for chip 1, 3 for chip 2
+    // Per-chip phase compensation: time since THIS chip was last updated
+    uint8_t chipIdx = currentSidChip - 1;  // 0 or 1
+    uint32_t elapsed = now - lastChipTime[chipIdx];
+    lastChipTime[chipIdx] = now;
+    uint8_t steps = elapsed / (SID_TIMER_INTERVAL_US * 2);  // 40µs per chip
+    if (steps < 1) steps = 1;
+    if (steps > 10) steps = 10;
+
+    uint8_t chipOffset = chipIdx * 3;  // 0 for chip 1, 3 for chip 2
     // Advance all phases
     for (uint8_t v = 0; v < 3; v++) {
       SidVoiceState& s = sidState[chipOffset + v];
@@ -262,20 +273,20 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
       uint8_t vol;
 
       // Calculate effective duty (with PWM sweep)
-      uint8_t effectiveDuty = s.duty;
+      uint16_t effectiveThreshold = s.dutyThreshold;
       if (s.pwmPhaseInc > 0) {
         s.pwmPhase += s.pwmPhaseInc * steps;  // Compensate for missed callbacks
         uint16_t pwmPos = (uint16_t)s.pwmPhase;
         // Triangle LFO: sweeps ±pwmDepth around base duty
         int8_t mod;
         if (pwmPos < 32768)
-          mod = (int8_t)((uint32_t)s.pwmDepth * pwmPos / 32768);
+          mod = (int8_t)((uint32_t)s.pwmDepth * pwmPos >> 15);
         else
-          mod = (int8_t)((uint32_t)s.pwmDepth * (65535 - pwmPos) / 32768);
+          mod = (int8_t)((uint32_t)s.pwmDepth * (65535 - pwmPos) >> 15);
         int eDuty = (int)s.duty + mod;
         if (eDuty < 0) eDuty = 0;
         if (eDuty > 15) eDuty = 15;
-        effectiveDuty = (uint8_t)eDuty;
+        effectiveThreshold = (uint16_t)eDuty << 12;
       }
 
       // Calculate volume based on waveform type
@@ -292,8 +303,8 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
         case 3: // Double pulse (two narrow pulses, duty controls spacing)
         {
           const uint32_t pulseWidth = 4096;  // Each pulse is 1/16 of cycle
-          // Second pulse position: duty maps to 1/16..15/16 of cycle
-          uint32_t secondPos = ((uint32_t)(effectiveDuty + 1) * 65536) / 16;
+          // Second pulse position: effectiveThreshold is duty<<12, +1 shift = (duty+1)<<12
+          uint32_t secondPos = effectiveThreshold + 4096;
           bool inFirst = (phasePos < pulseWidth);
           bool inSecond = (phasePos >= secondPos && phasePos < secondPos + pulseWidth);
           vol = (inFirst || inSecond) ? s.volume : 0;
@@ -301,8 +312,7 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
         }
         default: // Square with duty
         {
-          uint32_t dutyThreshold = ((uint32_t)effectiveDuty * 65536) / 16;
-          vol = (phasePos < dutyThreshold) ? s.volume : 0;
+          vol = (phasePos < effectiveThreshold) ? s.volume : 0;
           break;
         }
       }
@@ -320,6 +330,13 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
     // Legacy mode: single dedicated chip (sidChip variable)
     ym.selectYM(sidChip);
 
+    // Phase compensation for legacy mode
+    uint32_t elapsed = now - lastChipTime[0];
+    lastChipTime[0] = now;
+    uint8_t steps = elapsed / SID_TIMER_INTERVAL_US;
+    if (steps < 1) steps = 1;
+    if (steps > 10) steps = 10;
+
     // Process all 3 voices on the dedicated chip using phase accumulator
     for (uint8_t v = 0; v < 3; v++) {
       SidVoiceState& s = sidState[v];
@@ -328,8 +345,8 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
 
       s.phase += s.phaseInc * steps;  // Compensate for missed callbacks
 
-      // Duty cycle threshold (legacy uses global sidDuty)
-      uint32_t dutyThreshold = ((uint32_t)sidDuty * 65536) / 16;
+      // Duty cycle threshold (legacy uses global sidDuty, shift instead of divide)
+      uint16_t dutyThreshold = (uint16_t)sidDuty << 12;
       uint16_t phasePos = (uint16_t)s.phase;
 
       bool shouldBeHigh = (phasePos < dutyThreshold);
@@ -342,7 +359,6 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
   }
 
   ymBusBusy = false;  // Allow main loop writes again
-  return true;
 }
 
 // ============================================================================
@@ -351,17 +367,25 @@ RAM_FUNC bool sidTimerCallback(struct repeating_timer *t) {
 
 void sidTimerStart() {
   if (!sidTimerActive) {
-    lastCallbackTime = time_us_32();  // Initialize so first callback has valid elapsed time
-    add_repeating_timer_us(-SID_TIMER_INTERVAL_US, sidTimerCallback, NULL, &sidTimer);
+    lastChipTime[0] = lastChipTime[1] = time_us_32();
+
+    // Set up hardware alarm with RAM-resident ISR (bypasses flash-based alarm pool)
+    hw_set_bits(&timer_hw->inte, 1u << SID_ALARM_NUM);
+    irq_set_exclusive_handler(SID_ALARM_IRQ, sidTimerISR);
+    irq_set_enabled(SID_ALARM_IRQ, true);
+    timer_hw->alarm[SID_ALARM_NUM] = timer_hw->timerawl + SID_TIMER_INTERVAL_US;
+
     sidTimerActive = true;
   }
 }
 
 void sidTimerStop() {
   if (sidTimerActive) {
-    sidTimerActive = false;  // Set flag first to prevent restarts
-    cancel_repeating_timer(&sidTimer);  // This blocks until timer actually stops
-    __dmb();  // Memory barrier to ensure all operations complete
+    sidTimerActive = false;
+    irq_set_enabled(SID_ALARM_IRQ, false);
+    hw_clear_bits(&timer_hw->inte, 1u << SID_ALARM_NUM);
+    irq_remove_handler(SID_ALARM_IRQ, sidTimerISR);
+    __dmb();
   }
 }
 
@@ -389,7 +413,7 @@ void sidTimerPause() {
 // Resume SID timer after flash read
 void sidTimerResume() {
   if (sidTimerPauseRequested) {
-    lastCallbackTime = time_us_32();  // Reset so first callback after resume doesn't over-compensate
+    lastChipTime[0] = lastChipTime[1] = time_us_32();  // Reset so first callback after resume doesn't over-compensate
     sidTimerPauseRequested = false;
     __dmb();  // Memory barrier
   }
@@ -427,6 +451,7 @@ void sidInit() {
     sidState[v].isHigh = false;
     sidState[v].volume = 0;
     sidState[v].duty = 8;  // Default 50% duty (voiceSettings may not be loaded yet)
+    sidState[v].dutyThreshold = 8 << 12;
     sidState[v].active = false;
     sidState[v].waveform = 0;
     sidState[v].lastWrittenVol = 0;
@@ -459,6 +484,7 @@ void sidModeInit() {
     sidState[i].volume = 0;
     uint8_t chipIdx = (i < 3) ? 0 : 1;
     sidState[i].duty = sidDutyChip[chipIdx];
+    sidState[i].dutyThreshold = (uint16_t)sidDutyChip[chipIdx] << 12;
     sidState[i].active = false;
     sidState[i].waveform = voiceSettings[voiceIdx].sidWave;
     sidState[i].lastWrittenVol = 0;
@@ -547,20 +573,13 @@ void sidVoiceStartGlobal(uint8_t voiceIdx, uint16_t period, uint8_t volume) {
   // Get per-chip duty cycle from global settings (same as timer callback uses)
   uint8_t chipIdx = chip - 1;  // chip 1->0, chip 2->1
   s.duty = sidDutyChip[chipIdx];
+  s.dutyThreshold = (uint16_t)sidDutyChip[chipIdx] << 12;
 
   // Update timing (set phaseInc)
   updateSidTimingGlobal(voiceIdx, period);
 
-  // Write ZERO volume initially - timer callback will write real volume
-  // on first LOW->HIGH transition, preventing click
-  {
-    uint32_t irq = save_and_disable_interrupts();
-    ymBusBusy = true;
-    restore_interrupts(irq);
-  }
-  ym.selectYM(chip);
-  ym.writeFast(8 + voice, 0);  // Start silent
-  ymBusBusy = false;
+  // Force timer to write on next pass (lastWrittenVol mismatch triggers write)
+  s.lastWrittenVol = 0xFF;
 
   // Ensure timer is running (safeguard in case it got stopped)
   sidTimerStart();
@@ -579,18 +598,8 @@ void sidVoiceStopGlobal(uint8_t voiceIdx) {
   s.phase = 0;
   s.phaseInc = 0;
 
-  // Write zero volume to the appropriate chip
-  uint8_t chip = (voiceIdx < 3) ? 1 : 2;
-  uint8_t voice = voiceIdx % 3;
-
-  {
-    uint32_t irq = save_and_disable_interrupts();
-    ymBusBusy = true;
-    restore_interrupts(irq);
-  }
-  ym.selectYM(chip);
-  ym.writeFast(8 + voice, 0);
-  ymBusBusy = false;
+  // Force timer to write zero on next pass
+  s.lastWrittenVol = 0xFF;
 }
 
 void updateSidTimingGlobal(uint8_t voiceIdx, uint16_t period) {

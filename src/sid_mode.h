@@ -31,6 +31,7 @@ struct SidVoiceState {
   volatile bool isHigh;           // Current volume state (high or low) - timer reads/writes
   volatile uint8_t volume;        // Target volume when high (0-15) - main loop writes, timer reads
   volatile uint8_t duty;          // Per-voice duty cycle (0-15) - volatile for cross-core visibility
+  volatile uint16_t dutyThreshold; // Pre-computed: duty << 12 (avoids division in ISR)
   volatile bool active;           // Voice is actively playing - main loop writes, timer reads
   // Extended SID features
   volatile uint8_t waveform;      // 0=square, 1=saw, 2=tri, 3=double-pulse
@@ -64,7 +65,6 @@ extern volatile bool sidVoiceOn[3][3];
 extern volatile bool ymBusBusy;
 
 // --- Timer ---
-extern struct repeating_timer sidTimer;
 extern volatile bool sidTimerActive;
 
 // ============================================================================
@@ -81,8 +81,8 @@ void sidVoiceStart(uint8_t voice, uint16_t period, uint8_t volume);
 // Stop a SID voice
 void sidVoiceStop(uint8_t voice);
 
-// Timer callback for synchronized volume flipping
-bool sidTimerCallback(struct repeating_timer *t);
+// Timer ISR for synchronized volume flipping (RAM-resident, bypasses flash alarm pool)
+void sidTimerISR();
 
 // Start SID timer
 void sidTimerStart();

@@ -84,21 +84,21 @@ RAM_FUNC void YM2149Class::write(uint8_t chip, uint8_t reg, uint8_t val)
 
     // ADDRESS PHASE: BC1=1, BDIR=1 latches register address
     busWrite(reg);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
     gpio_put(PIN_BC1, 1);
     gpio_put(PIN_BDIR, 1);
-    delayMicroseconds(20);
+    delayMicroseconds(5);
     gpio_put(PIN_BC1, 0);
     gpio_put(PIN_BDIR, 0);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
 
     // DATA PHASE: BC1=0, BDIR=1 writes data to register
     busWrite(val);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
     gpio_put(PIN_BDIR, 1);
-    delayMicroseconds(20);
-    gpio_put(PIN_BDIR, 0);
     delayMicroseconds(5);
+    gpio_put(PIN_BDIR, 0);
+    delayMicroseconds(2);
 }
 
 #else
@@ -170,21 +170,21 @@ RAM_FUNC void YM2149Class::write(uint8_t chip, uint8_t reg, uint8_t val)
 
     // ADDRESS PHASE: BC1=1, BDIR=1 latches register address
     busWrite(reg);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
     gpio_put(PIN_BC1, 1);
     gpio_put(PIN_BDIR, 1);
-    delayMicroseconds(20);
+    delayMicroseconds(5);
     gpio_put(PIN_BC1, 0);
     gpio_put(PIN_BDIR, 0);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
 
     // DATA PHASE: BC1=0, BDIR=1 writes data to register
     busWrite(val);
-    delayMicroseconds(10);
+    delayMicroseconds(2);
     gpio_put(PIN_BDIR, 1);
-    delayMicroseconds(20);
-    gpio_put(PIN_BDIR, 0);
     delayMicroseconds(5);
+    gpio_put(PIN_BDIR, 0);
+    delayMicroseconds(2);
 }
 
 #endif

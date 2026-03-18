@@ -43,42 +43,66 @@ public:
         // Y0 (SEL=0) → YM₂, Y1 (SEL=1) → YM₁, Y2 (SEL=2) → YM₀
         // So chip 0 needs SEL=2, chip 1 needs SEL=1, chip 2 needs SEL=0
         chip = 2 - chip;
-        gpio_put(PIN_SEL_A, (chip & 1) ? 1 : 0);
-        gpio_put(PIN_SEL_B, (chip & 2) ? 1 : 0);
-        gpio_put(PIN_SEL_C, (chip & 4) ? 1 : 0);
+        // SEL_A=GPIO10, SEL_B=GPIO11, SEL_C=GPIO12 — write all 3 atomically
+        gpio_put_masked(0x7u << PIN_SEL_A, (uint32_t)chip << PIN_SEL_A);
     }
 
     inline void busWrite(uint8_t value)
     {
-        // Write each bit individually - slower but reliable
-        for (uint8_t i = 0; i < 8; i++) {
-            gpio_put(PIN_DATA_BASE + i, (value >> i) & 1);
-        }
+        // Write all 8 data bits simultaneously (GPIO 0-7 contiguous from bit 0)
+        gpio_put_masked(0xFF, (uint32_t)value);
+    }
+
+    // RAM-resident busy wait - avoids flash XIP cache jitter in timer ISR
+    static inline void __attribute__((always_inline)) delayUs_ram(uint32_t us)
+    {
+        // RP2040 at 133MHz: ~133 cycles per µs
+        // Inner loop: sub + bne = 3 cycles on Cortex-M0+
+        uint32_t count = us * 44;
+        __asm volatile (
+            "1: sub %0, #1\n"
+            "   bne 1b\n"
+            : "+l"(count)
+        );
+    }
+
+    // Half-microsecond RAM-resident delay (~500ns)
+    // Used in writeFast for tighter YM2149 bus timing (1.5× safety margin over datasheet)
+    static inline void __attribute__((always_inline)) delayHalfUs_ram()
+    {
+        uint32_t count = 22;
+        __asm volatile (
+            "1: sub %0, #1\n"
+            "   bne 1b\n"
+            : "+l"(count)
+        );
     }
 
     inline void writeFast(uint8_t address, uint8_t value)
     {
         // Note: Assumes chip is already selected
+        // YM2149 timing: tAS=300ns, tDW=300ns, tDS=200ns, tDH=50ns
+        // 1µs delays are ~3x safety margin over datasheet minimums
+
         // === ADDRESS PHASE ===
         busWrite(address & 0x0F);
-        delayMicroseconds(2);
+        delayHalfUs_ram();  // tAS: address setup (min 300ns, ~500ns actual)
 
-        // Simultaneous BC1+BDIR assertion
         gpio_set_mask((1 << PIN_BC1) | (1 << PIN_BDIR));
-        delayMicroseconds(5);
+        delayHalfUs_ram();  // tDW: write pulse width (min 300ns, ~500ns actual)
 
         gpio_clr_mask((1 << PIN_BC1) | (1 << PIN_BDIR));
-        delayMicroseconds(5);
+        delayHalfUs_ram();  // tAH: address hold (min 80ns, ~500ns actual)
 
         // === DATA PHASE ===
         busWrite(value);
-        delayMicroseconds(2);
+        delayHalfUs_ram();  // tDS: data setup (min 200ns, ~500ns actual)
 
         gpio_put(PIN_BDIR, 1);
-        delayMicroseconds(5);
+        delayHalfUs_ram();  // tDW: write pulse width (min 300ns, ~500ns actual)
 
         gpio_put(PIN_BDIR, 0);
-        delayMicroseconds(2);
+        delayHalfUs_ram();  // tDH: data hold (min 50ns, ~500ns actual)
     }
 
 #else

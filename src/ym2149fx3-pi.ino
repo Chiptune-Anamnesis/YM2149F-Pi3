@@ -21,6 +21,7 @@
 #include "fx_chip.h"
 #include "sample_player.h"
 #include "preset.h"
+#include "splash.h"
 
 #if USE_YMPLAYER_SERIAL
   #include "YMPlayerSerial.h"
@@ -50,16 +51,7 @@ void setup() {
   if (displayInit()) {
     delay(50);
 
-    // Splash screen
-    display.setTextSize(2);
-    display.setTextColor(SH110X_WHITE);
-    display.setCursor(10, 20);
-    display.print("HobbyChop");
-    display.setTextSize(1);
-    display.setCursor(30, 45);
-    display.print("YM2149Fx3");
-    display.display();
-    delay(2000);
+    drawSplashCube(display);
   }
 
   // Initialize multiplexer pins

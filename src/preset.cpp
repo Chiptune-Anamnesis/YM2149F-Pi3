@@ -730,6 +730,7 @@ bool sidPresetLoad(uint8_t presetIndex) {
 
     // Update SID voice state for active playback
     sidState[i].duty = preset->voices[i].sidDuty;
+    sidState[i].dutyThreshold = (uint16_t)preset->voices[i].sidDuty << 12;
     sidState[i].waveform = preset->voices[i].sidWave;
     sidState[i].pwmDepth = preset->voices[i].sidPwmDepth;
     sidState[i].syncSource = preset->voices[i].sidSync;
