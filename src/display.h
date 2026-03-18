@@ -156,7 +156,7 @@ extern uint8_t currentChip;
 
 
 // SMPL settings menu items (used when sampleModeGlobal is active)
-#define SMPL_ITEM_COUNT 9
+#define SMPL_ITEM_COUNT 10
 #define SMPL_SECTION 0
 #define SMPL_SAMPLE 1
 #define SMPL_MODE 2
@@ -164,8 +164,9 @@ extern uint8_t currentChip;
 #define SMPL_PITCH 4
 #define SMPL_OCT 5
 #define SMPL_LEN 6
-#define SMPL_PRESET 7
-#define SMPL_BACK 8
+#define SMPL_CRUSH 7
+#define SMPL_PRESET 8
+#define SMPL_BACK 9
 
 // Current submenu level (0 = main settings, 1-3 = effect submenus)
 extern uint8_t settingsSubmenu;

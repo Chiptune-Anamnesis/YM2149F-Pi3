@@ -107,6 +107,7 @@ struct DisplaySnapshot {
   int8_t samplePitch;
   int8_t sampleOctave;
   uint8_t sampleLengthParam;  // Length parameter (1-127)
+  uint8_t sampleDownsample;   // 0-7 bitcrush level
 };
 
 // --- Command Types ---
@@ -208,6 +209,7 @@ enum CommandType : uint8_t {
   CMD_SET_SAMPLE_PITCH,
   CMD_SET_SAMPLE_OCTAVE,
   CMD_SET_SAMPLE_LENGTH,
+  CMD_SET_SAMPLE_DOWNSAMPLE,
 
   // Preset commands
   CMD_PRESET_LOAD,    // param1 = preset index

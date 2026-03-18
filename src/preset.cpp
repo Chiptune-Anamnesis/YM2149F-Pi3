@@ -362,11 +362,11 @@ void presetCaptureCurrent(PresetData& p) {
   p.sampleMode = sampleMode;
   p.sampleVolume = sampleVolume;
   p.sampleSeqIndex = sampleSeqIndex;
-
-  // Per-sample pitch + length
+  // Per-sample pitch + length + crush
   memcpy(p.samplePitchArr, samplePitchArr, TOTAL_SAMPLE_COUNT);
   memcpy(p.sampleOctaveArr, sampleOctaveArr, TOTAL_SAMPLE_COUNT);
   memcpy(p.sampleLengthArr, sampleLengthArr, TOTAL_SAMPLE_COUNT);
+  memcpy(p.sampleCrushArr, sampleCrushArr, TOTAL_SAMPLE_COUNT);
 
   // Global
   p.polyMode = polyMode;
@@ -452,11 +452,14 @@ void presetApplyCurrent(const PresetData& p) {
   sampleMode = p.sampleMode;
   sampleVolume = p.sampleVolume;
   sampleSeqIndex = p.sampleSeqIndex;
-
-  // Per-sample pitch + length
+  // Per-sample pitch + length + crush
   memcpy(samplePitchArr, p.samplePitchArr, TOTAL_SAMPLE_COUNT);
   memcpy(sampleOctaveArr, p.sampleOctaveArr, TOTAL_SAMPLE_COUNT);
   memcpy(sampleLengthArr, p.sampleLengthArr, TOTAL_SAMPLE_COUNT);
+  memcpy(sampleCrushArr, p.sampleCrushArr, TOTAL_SAMPLE_COUNT);
+  for (uint8_t i = 0; i < TOTAL_SAMPLE_COUNT; i++) {
+    if (sampleCrushArr[i] > 7) sampleCrushArr[i] = 0;
+  }
 
   // Global
   polyMode = p.polyMode;
@@ -887,6 +890,13 @@ bool smplPresetLoad(uint8_t presetIndex) {
   memcpy(sampleOctaveArr, p.octaveArr, TOTAL_SAMPLE_COUNT);
   memcpy(sampleLengthArr, p.lengthArr, TOTAL_SAMPLE_COUNT);
 
+  // Unpack nibble-packed crush array
+  for (uint8_t i = 0; i < TOTAL_SAMPLE_COUNT; i++) {
+    uint8_t packed = p.crushPacked[i / 2];
+    sampleCrushArr[i] = (i & 1) ? (packed >> 4) : (packed & 0x0F);
+    if (sampleCrushArr[i] > 7) sampleCrushArr[i] = 0;
+  }
+
   // Apply global sample settings
   sampleMode = p.sampleMode;
   sampleVolume = p.sampleVolume;
@@ -912,6 +922,11 @@ bool smplPresetSaveUser(uint8_t userSlot, const char* name) {
   memcpy(newPreset.pitchArr, samplePitchArr, TOTAL_SAMPLE_COUNT);
   memcpy(newPreset.octaveArr, sampleOctaveArr, TOTAL_SAMPLE_COUNT);
   memcpy(newPreset.lengthArr, sampleLengthArr, TOTAL_SAMPLE_COUNT);
+
+  // Pack crush array into nibbles (2 samples per byte)
+  for (uint8_t i = 0; i < TOTAL_SAMPLE_COUNT; i += 2) {
+    newPreset.crushPacked[i / 2] = (sampleCrushArr[i] & 0x0F) | ((sampleCrushArr[i + 1] & 0x0F) << 4);
+  }
 
   userPresets[userSlot] = newPreset;
   presetWriteFlash(SMPL_PRESET_FLASH_OFFSET, (const uint8_t*)userPresets, sizeof(userPresets));

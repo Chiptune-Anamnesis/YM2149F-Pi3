@@ -1176,6 +1176,7 @@ static const char* getSampleSettingsLabel(int item) {
     case SMPL_PITCH:   return "PITCH";
     case SMPL_OCT:     return "OCT";
     case SMPL_LEN:     return "LEN";
+    case SMPL_CRUSH:   return "CRUSH";
     case SMPL_PRESET:  return "PRESET";
     case SMPL_BACK:    return "BACK";
     default:           return "?";
@@ -1191,6 +1192,7 @@ int getSampleSettingsValue(int item) {
     case SMPL_PITCH:   return displaySnapshotCopy.samplePitch;
     case SMPL_OCT:     return displaySnapshotCopy.sampleOctave;
     case SMPL_LEN:     return displaySnapshotCopy.sampleLengthParam;
+    case SMPL_CRUSH:   return displaySnapshotCopy.sampleDownsample;
     case SMPL_PRESET:  return currentSmplPreset;
     default:           return 0;
   }
@@ -1217,6 +1219,7 @@ static void getSampleSettingsValueStr(int item, int value, char* buf) {
       break;
     case SMPL_VOL:
     case SMPL_LEN:
+    case SMPL_CRUSH:
       snprintf(buf, 12, "%d", value);
       break;
     case SMPL_PITCH:

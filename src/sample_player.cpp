@@ -29,6 +29,7 @@ uint8_t sampleMode = SAMPLE_MODE_MAPPED;  // Default to GM drum map
 uint8_t sampleVolume = 15;
 uint8_t sampleSeqIndex = 0;
 volatile uint8_t lastSampleNote = 0;
+volatile uint16_t sampleBendMultiplier = 256;  // 1.0x = no bend
 
 // Semitone ratios in 8.8 fixed-point (256 = 1.0)
 // Precomputed: round(256 * 2^(n/12)) for n=0..12
@@ -162,6 +163,27 @@ bool sampleTimerCallback(repeating_timer_t *rt) {
     // Advance position by per-voice pitch increment (8.8 fixed-point)
     sampleVoices[v].pos = fixedPos + sampleVoices[v].pitchIncrement;
 
+    // Per-sample bitcrush: reduce bit depth and sample rate for lo-fi effect
+    uint8_t crush = sampleVoices[v].crushLevel;
+    if (crush > 0) {
+      // Bit-depth reduction: zero out lower bits
+      static const uint8_t crushBits[] = {0, 1, 2, 3, 4, 5, 5, 6};
+      uint8_t shift = crushBits[crush];
+      val = (val >> shift) << shift;
+
+      // Sample-rate reduction: hold value for N callbacks
+      static const uint8_t crushRate[] = {1, 1, 2, 2, 4, 4, 8, 8};
+      static uint8_t holdCounter[3] = {0, 0, 0};
+      static uint8_t heldVal[3] = {128, 128, 128};
+      uint8_t rate = crushRate[crush];
+      holdCounter[v]++;
+      if (holdCounter[v] >= rate) {
+        holdCounter[v] = 0;
+        heldVal[v] = val;
+      }
+      val = heldVal[v];
+    }
+
     // Scale 8-bit (0-255) to 4-bit YM volume (0-15), weighted by sampleVolume
     val = ((uint16_t)val * sampleVolume) >> 8;
     ym.writeFast(8 + v, val);
@@ -183,21 +205,19 @@ void samplePlayerInit() {
     sampleVoices[v].data = nullptr;
     sampleVoices[v].length = 0;
     sampleVoices[v].pitchIncrement = 256;  // Default 1.0x speed
+    sampleVoices[v].basePitchIncrement = 256;
     sampleVoices[v].note = 0;
     sampleVoices[v].sampleIdx = 0;
     ym.write(SAMPLE_CHIP, 8 + v, 0);  // Silence
   }
   nextSampleVoice = 0;
 
-  // Disable tone and noise for all voices on chip 2
-  // Pure volume-register PCM output
-  ym.write(SAMPLE_CHIP, 0x07, 0b00111111);
-
   sampleSection = SAMPLE_SECTION_DRUMS;
   sampleSelect = 0;
   sampleMode = SAMPLE_MODE_MAPPED;
   sampleVolume = 15;
   sampleSeqIndex = 0;
+  sampleBendMultiplier = 256;
 
   // Start the sample timer - runs continuously at 8000 Hz
   sampleTimerActive = true;
@@ -286,28 +306,34 @@ void sampleTrigger(uint8_t note, uint8_t velocity) {
     nextSampleVoice = (nextSampleVoice + 1) % SAMPLE_VOICE_COUNT;
   }
 
-  // Look up per-sample pitch/octave/length
+  // Look up per-sample pitch/octave/length/crush
   uint8_t flatIdx = sampleFlatIndex(sampleSection, sampleIdx);
   int8_t pitch = samplePitchArr[flatIdx];
   int8_t octave = sampleOctaveArr[flatIdx];
   uint8_t len = sampleLengthArr[flatIdx];
+  uint8_t crush = sampleCrushArr[flatIdx];
 
   // Compute effective length based on per-sample length (1-127, 127=full)
   uint16_t fullLen = sectionSamples[sampleIdx].length;
   uint16_t effectiveLen = ((uint32_t)fullLen * len) / 127;
   if (effectiveLen == 0) effectiveLen = 1;
 
-  // Compute per-sample pitch increment
+  // Compute per-sample pitch increment and apply current pitch bend
   uint16_t pInc = computePitchIncrement(pitch, octave);
+  uint16_t bendMult = sampleBendMultiplier;
+  uint16_t effectiveInc = ((uint32_t)pInc * bendMult) >> 8;
+  if (effectiveInc == 0) effectiveInc = 1;
 
   // Atomically update voice state
   uint32_t irq = save_and_disable_interrupts();
   sampleVoices[voiceIdx].data = sectionSamples[sampleIdx].data;
   sampleVoices[voiceIdx].length = effectiveLen;
-  sampleVoices[voiceIdx].pitchIncrement = pInc;
+  sampleVoices[voiceIdx].basePitchIncrement = pInc;
+  sampleVoices[voiceIdx].pitchIncrement = effectiveInc;
   sampleVoices[voiceIdx].pos = 0;  // 8.8 fixed-point, starts at 0.0
   sampleVoices[voiceIdx].note = note;
   sampleVoices[voiceIdx].sampleIdx = sampleIdx;
+  sampleVoices[voiceIdx].crushLevel = crush;
   sampleVoices[voiceIdx].playing = true;
   restore_interrupts(irq);
 }
@@ -321,12 +347,14 @@ void sampleStop() {
 
 void sampleModeEnter() {
   sampleStop();
+  sampleBendMultiplier = 256;
   // Disable tone+noise on all chip 2 voices (pure volume-register PCM)
   ym.write(SAMPLE_CHIP, 0x07, 0b00111111);
 }
 
 void sampleModeExit() {
   sampleStop();
+  sampleBendMultiplier = 256;
   // Restore chip 2 mixer to normal (tones enabled, noise off)
   ym.write(SAMPLE_CHIP, 0x07, 0b00111000);
 }
@@ -334,6 +362,48 @@ void sampleModeExit() {
 // sampleUpdatePitchIncrement() — kept as no-op for API compatibility
 // Pitch increments are now computed per-sample at trigger time
 void sampleUpdatePitchIncrement() {}
+
+void sampleApplyPitchBend(uint8_t lsb, uint8_t msb) {
+  int val = (msb << 7) | lsb;    // 0..16383, center=8192
+  int offset = val - 8192;        // -8192..+8191
+
+  uint16_t mult;
+  if (offset == 0) {
+    mult = 256;
+  } else if (offset > 0) {
+    // Positive bend: pitch UP — interpolate in semitoneTable
+    // Map offset (0..8191) to semitones (0..2.0) in 8.8 fixed-point
+    uint32_t semiFixed = ((uint32_t)offset * 512) / 8192;  // 0..511
+    uint8_t semiInt = semiFixed >> 8;     // 0..1
+    uint8_t semiFrac = semiFixed & 0xFF;  // fractional 0..255
+    if (semiInt > 11) semiInt = 11;
+    uint16_t a = semitoneTable[semiInt];
+    uint16_t b = semitoneTable[semiInt + 1];
+    mult = a + (((uint32_t)(b - a) * semiFrac) >> 8);
+  } else {
+    // Negative bend: pitch DOWN — interpolate then invert
+    uint32_t absOffset = (uint32_t)(-offset);
+    uint32_t semiFixed = (absOffset * 512) / 8192;
+    uint8_t semiInt = semiFixed >> 8;
+    uint8_t semiFrac = semiFixed & 0xFF;
+    if (semiInt > 11) semiInt = 11;
+    uint16_t a = semitoneTable[semiInt];
+    uint16_t b = semitoneTable[semiInt + 1];
+    uint16_t upMult = a + (((uint32_t)(b - a) * semiFrac) >> 8);
+    mult = (uint16_t)(65536UL / upMult);
+  }
+
+  sampleBendMultiplier = mult;
+
+  // Update effective pitchIncrement for all active voices
+  for (uint8_t v = 0; v < SAMPLE_VOICE_COUNT; v++) {
+    if (sampleVoices[v].playing) {
+      uint16_t effective = ((uint32_t)sampleVoices[v].basePitchIncrement * mult) >> 8;
+      if (effective == 0) effective = 1;
+      sampleVoices[v].pitchIncrement = effective;
+    }
+  }
+}
 
 // ============================================================================
 // HELPERS

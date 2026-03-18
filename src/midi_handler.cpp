@@ -87,6 +87,8 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   if (sampleModeGlobal) {
     if (cmd == 0x90 && d2 > 0 && isChannel) {
       sampleTrigger(d1, d2);
+    } else if (cmd == 0xE0 && isChannel) {
+      sampleApplyPitchBend(d1, d2);
     }
     return;
   }
@@ -259,6 +261,191 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
               }
               break;
       case 85:  vibDelayMs[ch] = map(d2, 0, 127, 0, 2000); break;
+
+      // ================================================================
+      // Voice Settings (CC 14-17) — applied to all 9 voices
+      // ================================================================
+      case 14: {
+        int8_t val = (int8_t)map(d2, 0, 127, -50, 50);
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].detuneCents = val;
+        break;
+      }
+      case 15: {
+        int8_t val = (int8_t)map(d2, 0, 127, -3, 3);
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].octaveShift = val;
+        break;
+      }
+      case 16: {
+        uint8_t val = d2 * 15 / 127;
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].maxVolume = val;
+        break;
+      }
+      case 17: {
+        uint8_t val = d2 * 31 / 127;
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].noiseFreq = val;
+        for (uint8_t c = 0; c < 3; c++) ym.write(c, 0x06, val);
+        break;
+      }
+
+      // ================================================================
+      // Envelope ADSR (CC 18-21) — applied to all 9 voices
+      // ================================================================
+      case 18: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].envAttack = d2; break; }
+      case 19: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].envDecay = d2; break; }
+      case 20: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].envSustain = d2; break; }
+      case 21: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].envRelease = d2; break; }
+
+      // ================================================================
+      // Tremolo (CC 22-24) — applied to all 9 voices
+      // ================================================================
+      case 22: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].tremoloOn = d2; break; }
+      case 23: {
+        uint8_t val = map(d2, 0, 127, 10, 150);
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].tremoloRate = val;
+        break;
+      }
+      case 24: {
+        uint8_t val = d2 * 100 / 127;
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].tremoloDepth = val;
+        break;
+      }
+
+      // ================================================================
+      // Pitch Envelope (CC 25-27) — applied to all 9 voices
+      // ================================================================
+      case 25: {
+        uint8_t val = d2 * 24 / 127;
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].pitchEnvAmt = val;
+        break;
+      }
+      case 26: { for (uint8_t v = 0; v < 9; v++) voiceSettings[v].pitchEnvTime = d2; break; }
+      case 27: {
+        uint8_t val = d2 >= 64 ? 1 : 0;
+        for (uint8_t v = 0; v < 9; v++) voiceSettings[v].pitchEnvDir = val;
+        break;
+      }
+
+      // ================================================================
+      // FX Master (CC 28-30)
+      // ================================================================
+      case 28: fxSetEnabled(d2 >= 64); break;
+      case 29: fxPanic(); fxType = d2 * 7 / 127; break;
+      case 30: fxRouting = d2 * 8 / 127; break;
+
+      // ================================================================
+      // Echo (CC 33-36)
+      // ================================================================
+      case 33: echoDelayMs = map(d2, 0, 127, 50, 2000); break;
+      case 34: echoRepeats = map(d2, 0, 127, 1, 10); break;
+      case 35: echoDecay = map(d2, 0, 127, 1, 15); break;
+      case 36: echoVolume = map(d2, 0, 127, 1, 15); break;
+
+      // ================================================================
+      // Arp (CC 37-40)
+      // ================================================================
+      case 37: arpSpeedMs = map(d2, 0, 127, 50, 500); break;
+      case 38: arpPattern = d2 * 3 / 127; break;
+      case 39: arpVolume = map(d2, 0, 127, 1, 15); break;
+      case 40: arpOctave = (int8_t)map(d2, 0, 127, -2, 2); break;
+
+      // ================================================================
+      // BitCrush (CC 41-43)
+      // ================================================================
+      case 41: bitCrushBits = map(d2, 0, 127, 1, 4); break;
+      case 42: bitCrushRate = map(d2, 0, 127, 1, 10); break;
+      case 43: bitCrushVolume = map(d2, 0, 127, 1, 15); break;
+
+      // ================================================================
+      // Reverb (CC 44-48)
+      // ================================================================
+      case 44: reverbTaps = map(d2, 0, 127, 2, 6); break;
+      case 45: reverbSpacing = map(d2, 0, 127, 20, 100); break;
+      case 46: reverbDecay = map(d2, 0, 127, 1, 8); break;
+      case 47: reverbDetune = (int8_t)map(d2, 0, 127, -5, 5); break;
+      case 48: reverbVolume = map(d2, 0, 127, 1, 15); break;
+
+      // ================================================================
+      // Chorus (CC 49-52)
+      // ================================================================
+      case 49: chorusDetune1 = (int8_t)map(d2, 0, 127, -50, 50); break;
+      case 50: chorusDetune2 = (int8_t)map(d2, 0, 127, -50, 50); break;
+      case 51: chorusVolume = map(d2, 0, 127, 1, 15); break;
+      case 52: chorusRate = d2 * 80 / 127; break;
+
+      // ================================================================
+      // Harmonizer (CC 53-55)
+      // ================================================================
+      case 53: harmChord = d2 * 11 / 127; break;
+      case 54: harmVolume = map(d2, 0, 127, 1, 15); break;
+      case 55: harmOctave = (int8_t)map(d2, 0, 127, -2, 2); break;
+
+      // ================================================================
+      // Gate (CC 56-60)
+      // ================================================================
+      case 56: gateRateMs = map(d2, 0, 127, 30, 500); break;
+      case 57: gatePattern = d2 * 3 / 127; break;
+      case 58: gateVolume = map(d2, 0, 127, 1, 15); break;
+      case 59: gateDuty = map(d2, 0, 127, 1, 7); break;
+      case 60: gateSeed = d2 * 15 / 127; break;
+
+      // ================================================================
+      // Sample Global (CC 102-105) — only in sample mode
+      // ================================================================
+      case 102:
+        if (sampleModeGlobal) sampleVolume = map(d2, 0, 127, 1, 15);
+        break;
+      case 103:
+        if (sampleModeGlobal) sampleMode = d2 * 3 / 127;
+        break;
+      case 104:
+        if (sampleModeGlobal) {
+          sampleSection = d2 * 2 / 127;
+          if (sampleSection >= SAMPLE_SECTION_COUNT) sampleSection = SAMPLE_SECTION_COUNT - 1;
+          uint8_t cnt = getSectionSampleCount(sampleSection);
+          if (sampleSelect >= cnt) sampleSelect = 0;
+        }
+        break;
+      case 105:
+        if (sampleModeGlobal) {
+          uint8_t cnt = getSectionSampleCount(sampleSection);
+          sampleSelect = (cnt > 1) ? d2 * (cnt - 1) / 127 : 0;
+        }
+        break;
+
+      // ================================================================
+      // Link (CC 106-107)
+      // ================================================================
+      case 106: applyLinkMode(d2 * 3 / 127); break;
+      case 107: applyVoiceLinkMask(d2 * 7 / 127); break;
+
+      // ================================================================
+      // Per-Sample Settings (CC 108-111) — targets current sample
+      // ================================================================
+      case 108:
+        if (sampleModeGlobal) {
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          samplePitchArr[flat] = (int8_t)map(d2, 0, 127, -12, 12);
+        }
+        break;
+      case 109:
+        if (sampleModeGlobal) {
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          sampleOctaveArr[flat] = (int8_t)map(d2, 0, 127, -3, 3);
+        }
+        break;
+      case 110:
+        if (sampleModeGlobal) {
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          sampleLengthArr[flat] = d2 < 1 ? 1 : d2;
+        }
+        break;
+      case 111:
+        if (sampleModeGlobal) {
+          uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+          sampleCrushArr[flat] = d2 * 7 / 127;
+        }
+        break;
+
       case 120: allNotesOffChannel(ch); fxPanic(); break;
       case 121: resetAllControllers(ch); fxPanic(); break;
       case 123:
@@ -380,6 +567,8 @@ void processUsbMidi() {
     if (sampleModeGlobal) {
       if (code == 0x09 && packet[3] > 0 && isChannel) {
         sampleTrigger(packet[2], packet[3]);
+      } else if (code == 0x0E && isChannel) {
+        sampleApplyPitchBend(packet[2], packet[3]);
       }
       // Still process system real-time messages below
       if (code != 0x0F) continue;

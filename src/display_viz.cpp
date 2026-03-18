@@ -9,6 +9,7 @@
 #include "fx_chip.h"
 #include "preset.h"
 #include "sample_player.h"
+#include "cat_anim.h"
 #include <Fonts/TomThumb.h>
 
 // ============================================================================
@@ -593,6 +594,16 @@ void updateDisplayDrums() {
   static uint8_t lastNote = 0;
   static uint8_t lastSampleIdx = 0;
 
+  // Idle tracking for cat animation
+  static unsigned long lastSamplePlayTime = 0;
+  static uint8_t catFrame = 0;
+  static unsigned long lastCatFrameTime = 0;
+
+  // Track when samples are playing
+  if (displaySnapshotCopy.sampleIsPlaying) {
+    lastSamplePlayTime = now;
+  }
+
   // Update static copy when a new sample starts
   if (displaySnapshotCopy.sampleData != nullptr && displaySnapshotCopy.sampleLength > 0) {
     lastData = displaySnapshotCopy.sampleData;
@@ -602,6 +613,36 @@ void updateDisplayDrums() {
   }
 
   display.clearDisplay();
+
+  // Show cat animation when idle: never played, or 30s since last sample
+  bool showCat = (lastData == nullptr || lastLen == 0) ||
+                 (!displaySnapshotCopy.sampleIsPlaying && lastSamplePlayTime > 0 &&
+                  (now - lastSamplePlayTime >= 30000));
+
+  if (showCat) {
+    // Animate cat frames (~150ms per frame)
+    if (now - lastCatFrameTime >= 150) {
+      catFrame = (catFrame + 1) % CAT_FRAME_COUNT;
+      lastCatFrameTime = now;
+    }
+
+    // "404" large text centered
+    display.setFont(NULL);
+    display.setTextSize(2);
+    display.setTextColor(SH110X_WHITE);
+    display.setCursor(44, 2);
+    display.print("404");
+
+    // Running cat bitmap centered
+    display.drawBitmap(48, 16, catFrames[catFrame], CAT_FRAME_W, CAT_FRAME_H, SH110X_WHITE);
+
+    // "SAMPLE NOT FOUND" small text centered
+    display.setTextSize(1);
+    display.setCursor(10, 52);
+    display.print("SAMPLE NOT FOUND");
+    return;
+  }
+
   display.setFont(&TomThumb);
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -610,12 +651,6 @@ void updateDisplayDrums() {
   const int waveTop = 8;
   const int waveBottom = 54;
   const int waveH = waveBottom - waveTop;
-
-  if (lastData == nullptr || lastLen == 0) {
-    display.setCursor(34, 34);
-    display.print("NO SAMPLE");
-    return;
-  }
 
   // Top label: note name + sample index
   static const char* noteNames[] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};

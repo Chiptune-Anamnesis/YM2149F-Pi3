@@ -233,6 +233,7 @@ void updateSnapshot() {
   displaySnapshotCopy.samplePitch = samplePitchArr[flat];
   displaySnapshotCopy.sampleOctave = sampleOctaveArr[flat];
   displaySnapshotCopy.sampleLengthParam = sampleLengthArr[flat];
+  displaySnapshotCopy.sampleDownsample = sampleCrushArr[flat];
 }
 
 // ============================================================================
@@ -669,6 +670,14 @@ void processCommands() {
         if (l > 127) l = 127;
         uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
         sampleLengthArr[flat] = l;
+        break;
+      }
+
+      case CMD_SET_SAMPLE_DOWNSAMPLE: {
+        uint8_t c = cmd.param1;
+        if (c > 7) c = 7;
+        uint8_t flat = sampleFlatIndex(sampleSection, sampleSelect);
+        sampleCrushArr[flat] = c;
         break;
       }
 

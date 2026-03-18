@@ -54,9 +54,11 @@ struct SampleVoice {
   volatile uint32_t pos;        // 8.8 fixed-point position for pitch shifting
   volatile const uint8_t* data;
   volatile uint16_t length;
-  uint16_t pitchIncrement;      // Per-voice pitch increment (8.8 fixed-point, 256=1.0x)
+  uint16_t pitchIncrement;      // Effective increment (base * bend), 8.8 fixed-point
+  uint16_t basePitchIncrement;  // Original increment from trigger (no bend applied)
   uint8_t note;                 // MIDI note that triggered this voice
   uint8_t sampleIdx;            // Which sample index is playing
+  uint8_t crushLevel;           // Per-sample bitcrush (0-7, copied at trigger)
 };
 
 extern SampleVoice sampleVoices[SAMPLE_VOICE_COUNT];
@@ -94,6 +96,10 @@ void sampleModeExit();
 
 // Recompute pitch increment from pitch/octave params
 void sampleUpdatePitchIncrement();
+
+// Apply MIDI pitch bend to all active sample voices
+extern volatile uint16_t sampleBendMultiplier;  // 8.8 fixed-point, 256=1.0x
+void sampleApplyPitchBend(uint8_t lsb, uint8_t msb);
 
 // Get sample mode name
 const char* getSampleModeName(uint8_t mode);

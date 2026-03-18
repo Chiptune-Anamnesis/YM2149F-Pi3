@@ -169,6 +169,7 @@ extern uint8_t sidDutyChip[2];  // Per-chip duty cycle: [0]=chip1, [1]=chip2 (0-
 extern int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT];   // -12 to +12 semitones per sample
 extern int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT];   // -3 to +3 octave shift per sample
 extern uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];   // 1-127 playback length per sample
+extern uint8_t sampleCrushArr[TOTAL_SAMPLE_COUNT];    // 0-7 bitcrush level per sample
 
 // Convert (section, sampleIdx) to flat array index
 inline uint8_t sampleFlatIndex(uint8_t section, uint8_t idx) {

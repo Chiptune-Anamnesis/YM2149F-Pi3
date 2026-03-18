@@ -2,6 +2,7 @@
 #include "voice_manager.h"
 #include "sid_mode.h"
 #include "settings.h"
+#include "sample_player.h"
 #include "YM2149.h"
 #include <math.h>
 
@@ -345,6 +346,7 @@ void resetAllControllers(uint8_t ch) {
 
   modWheel[ch] = 0;
   pitchBendSemis[ch] = 0;
+  if (sampleModeGlobal) sampleBendMultiplier = 256;
   pitchEnvAmt[ch] = 0;
   pitchEnvPhase[ch] = 0;
   pitchEnvShape[ch] = 0;

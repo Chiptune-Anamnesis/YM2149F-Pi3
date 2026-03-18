@@ -23,7 +23,7 @@
 // YM Presets section (12KB)
 #define YM_PRESET_FLASH_OFFSET 0
 #define YM_PRESET_FLASH_SIZE 12288    // 12KB = 3 sectors
-#define PRESET_USER_SLOTS 23          // 12KB / sizeof(PresetData), verified by static_assert
+#define PRESET_USER_SLOTS 21          // 12KB / sizeof(PresetData), verified by static_assert
 #define PRESET_FACTORY_COUNT 8
 #define PRESET_NAME_LEN 8
 
@@ -116,10 +116,11 @@ struct PresetData {
   uint8_t sampleVolume;
   uint8_t sampleSeqIndex;
 
-  // Per-sample pitch + length (192 bytes = 64 samples × 3 bytes each)
+  // Per-sample pitch + length + crush (256 bytes = 64 samples × 4 bytes each)
   int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT];
   int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT];
   uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];
+  uint8_t sampleCrushArr[TOTAL_SAMPLE_COUNT];
 
   // Global settings (5 bytes)
   uint8_t polyMode;
@@ -320,9 +321,9 @@ struct SmplPreset {
   int8_t  pitchArr[TOTAL_SAMPLE_COUNT];    // 64 bytes
   int8_t  octaveArr[TOTAL_SAMPLE_COUNT];   // 64 bytes
   uint8_t lengthArr[TOTAL_SAMPLE_COUNT];   // 64 bytes
-  uint8_t reserved[2];                     // 2 bytes padding
+  uint8_t crushPacked[TOTAL_SAMPLE_COUNT / 2]; // 32 bytes: nibble-packed crush (0-7), 2 samples per byte
 };
-// ~206 bytes × 16 = 3,296 bytes (fits in 4KB sector)
+// ~236 bytes × 16 = 3,776 bytes (fits in 4KB sector)
 
 // Current SMPL preset index (0xFF = custom/not from preset)
 extern uint8_t currentSmplPreset;

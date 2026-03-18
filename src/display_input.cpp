@@ -55,6 +55,7 @@ void handleEncoder() {
             case SMPL_PITCH:  minVal = -12; maxVal = 12; break;
             case SMPL_OCT:    minVal = -3; maxVal = 3; break;
             case SMPL_LEN:    minVal = 1; maxVal = 127; break;
+            case SMPL_CRUSH:  maxVal = 7; break;
             default:          maxVal = 0; break;
           }
           settingsTempValue += delta;
@@ -704,6 +705,9 @@ void handleEncoder() {
             }
             case SMPL_LEN:
               sendCommand(CMD_SET_SAMPLE_LENGTH, (uint8_t)settingsTempValue);
+              break;
+            case SMPL_CRUSH:
+              sendCommand(CMD_SET_SAMPLE_DOWNSAMPLE, (uint8_t)settingsTempValue);
               break;
           }
           settingsEditing = false;

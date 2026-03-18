@@ -61,6 +61,7 @@ uint8_t sidDutyChip[2] = {11, 11};         // Default duty for both chips
 int8_t  samplePitchArr[TOTAL_SAMPLE_COUNT]  = {0};  // All default to 0
 int8_t  sampleOctaveArr[TOTAL_SAMPLE_COUNT] = {0};  // All default to 0
 uint8_t sampleLengthArr[TOTAL_SAMPLE_COUNT];         // Initialized to 127 in settingsInit()
+uint8_t sampleCrushArr[TOTAL_SAMPLE_COUNT] = {0};   // All default to 0 (clean)
 
 // Display brightness
 uint8_t displayBrightness = DISPLAY_BRIGHTNESS_DEFAULT;
