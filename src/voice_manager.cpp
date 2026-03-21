@@ -385,7 +385,7 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     return;
   }
 
-  if (polyMode == 1 && !unisonMode && ch != 0) return;
+  if (polyMode == 1 && !unisonMode && ch != 0 && midiSynthChannel != MIDI_CHANNEL_OMNI) return;
 
   note += OCTAVE_SHIFT;
   while (note < MIDI_NOTE_MIN) note += 12;
@@ -713,7 +713,7 @@ void noteOff(uint8_t ch, uint8_t note) {
     return;
   }
 
-  if (polyMode == 1 && !unisonMode && ch != 0) return;
+  if (polyMode == 1 && !unisonMode && ch != 0 && midiSynthChannel != MIDI_CHANNEL_OMNI) return;
 
   note += OCTAVE_SHIFT;
   while (note < MIDI_NOTE_MIN) note += 12;
