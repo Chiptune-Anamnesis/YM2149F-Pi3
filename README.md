@@ -1,12 +1,16 @@
 # YM2149Fx3 MIDI Synthesizer
 
-Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design - powered by RP2040 (Raspberry Pi Pico).
+Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design — powered by RP2040 (Raspberry Pi Pico).
 
 ## Features
 
 ### 9-Voice Polyphonic YM2149F Synthesis
 - 3x YM2149F sound chips providing 9 independent tone voices
-- Mono, Semi-poly, and Poly voice allocation modes
+- **Four voice allocation modes:**
+  - **MONO** — 1 voice per MIDI channel (ch1→voice 0A, ch2→0B, ... ch9→2C). Each channel has independent settings. True 9-channel multitimbral.
+  - **SEMI** — 3 voices per chip, MIDI channel determines chip (ch1-3→Chip 0, ch4-6→Chip 1, ch7-9→Chip 2). Channel-based settings.
+  - **POLY** — Up to 9-voice polyphony, any voice on any chip. Notes allocated to first free voice. Per-voice settings for individual voice tweaking and chip linking.
+  - **MULTI** — Full polyphony like POLY, but settings follow MIDI channel instead of physical voice. Best for multi-channel DAW sequencing where each channel needs its own vibrato, envelope, detune, etc.
 - Per-voice settings: detune (cents), octave shift, max volume, noise frequency
 - Chip linking: mirror Chip 0 settings across chips for massive unison sounds
 - MIDI channels 1-9 mapped to voices (3 per chip)
