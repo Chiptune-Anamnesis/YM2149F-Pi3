@@ -55,26 +55,13 @@ RAM_FUNC float fastPow2Semi(float semitones) {
   return result;
 }
 
-// Fast sine approximation for LFOs (vibrato, tremolo)
+// Sine for LFOs (vibrato, tremolo)
 // Input: phase 0..1 (one full cycle), Output: -1..1
-// Parabolic approximation, accurate to ~0.3% — inaudible for LFO use
+// Uses sinf() — RP2040 has hardware FPU, cost is negligible in main loop
 RAM_FUNC float fastSin01(float phase) {
-  // Normalize to 0..1 range
   phase -= (int)phase;
   if (phase < 0) phase += 1.0f;
-
-  // Convert phase (0..1) to x (-1..1) matching sin() shape:
-  // phase 0 → x=0 (zero), 0.25 → x=1 (peak), 0.5 → x=0, 0.75 → x=-1 (trough)
-  float x;
-  if (phase < 0.25f)
-    x = phase * 4.0f;
-  else if (phase < 0.75f)
-    x = 2.0f - phase * 4.0f;
-  else
-    x = phase * 4.0f - 4.0f;
-
-  // Parabolic approximation of sin(π*x/2)
-  return x * (2.0f - (x < 0 ? -x : x)) * 0.225f + x * 0.775f;
+  return sinf(phase * 6.2831853f);  // 2*PI
 }
 
 // ============================================================================
@@ -106,6 +93,7 @@ float pitchEnvAmt[9] = {0};
 uint8_t pitchEnvShape[9] = {0};
 
 uint8_t expressionVal[9] = {127,127,127,127,127,127,127,127,127};
+float expressionSmooth[9] = {127,127,127,127,127,127,127,127,127};
 
 bool portamentoOn[9] = {false};
 float portamentoSpeed[9] = {0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f};
@@ -179,12 +167,8 @@ void updatePitchMod(uint8_t ch) {
         float rate = voiceSettings[settingsIdx].vibRateTenths / 10.0f;  // Hz
         float depthSemi = voiceSettings[settingsIdx].vibDepthCents / 100.0f;
 
-        // Time-based phase increment for consistent vibrato rate
-        unsigned long elapsed = now - vibLastTime[voiceIdx];
-        if (elapsed > 0 && elapsed < 100) {  // Sanity check: 1-100ms
-          vibPhase[voiceIdx] += rate * (elapsed / 1000.0f);
-        }
-        vibLastTime[voiceIdx] = now;
+        // Fixed-rate phase increment (called every PITCH_MOD_UPDATE_MS = 3ms)
+        vibPhase[voiceIdx] += rate * (PITCH_MOD_UPDATE_MS / 1000.0f);
 
         if (vibPhase[voiceIdx] >= 1.0f) vibPhase[voiceIdx] -= 1.0f;
         lfo = fastSin01(vibPhase[voiceIdx])
@@ -254,13 +238,9 @@ void updatePitchMod(uint8_t ch) {
       // Per-voice pitch envelope (menu-controlled)
       // Uses separate pitchEnvLastTime to avoid timing conflicts with ADS envelope
       if (voiceSettings[settingsIdx].pitchEnvAmt > 0) {
-        // Calculate time-based increment
+        // Fixed-rate increment (called every PITCH_MOD_UPDATE_MS = 3ms)
         float envTime = 10.0f + voiceSettings[settingsIdx].pitchEnvTime * 15.0f;  // 10ms to ~2s
-        unsigned long elapsed = now - pitchEnvLastTime[voiceIdx];
-        if (elapsed > 0 && elapsed < 100) {
-          voicePitchEnvPhase[voiceIdx] += elapsed / envTime;
-        }
-        pitchEnvLastTime[voiceIdx] = now;  // Update timestamp AFTER using it
+        voicePitchEnvPhase[voiceIdx] += PITCH_MOD_UPDATE_MS / envTime;
         if (voicePitchEnvPhase[voiceIdx] > 1.0f) voicePitchEnvPhase[voiceIdx] = 1.0f;
 
         // Apply pitch offset based on direction
@@ -280,9 +260,11 @@ void updatePitchMod(uint8_t ch) {
       float realtimeSemi = pitchBendSemis[ch] + lfo + envSemi;
       float finalPeriod = curPeriod[chip][v] / fastPow2Semi(realtimeSemi);
 
-      // Compute volume with expression
+      // Compute volume with smoothed expression (prevents zipper noise)
       uint16_t outP = uint16_t(finalPeriod + 0.5f);
-      uint8_t effectiveExpr = 127 - (uint8_t)((127 - expressionVal[ch]) * EXPRESSION_AMOUNT);
+      expressionSmooth[ch] += ((float)expressionVal[ch] - expressionSmooth[ch]) * 0.3f;
+      uint8_t smoothedExpr = (uint8_t)(expressionSmooth[ch] + 0.5f);
+      uint8_t effectiveExpr = 127 - (uint8_t)((127 - smoothedExpr) * EXPRESSION_AMOUNT);
       uint8_t vol = (voiceVol[chip][v] * effectiveExpr + 63) / 127;
 
       // Apply per-voice envelope level to volume (envelope is updated in updateAllEnvelopes)
@@ -316,18 +298,13 @@ void updatePitchMod(uint8_t ch) {
         float depth = voiceSettings[settingsIdx].tremoloDepth / 100.0f;  // 0-1
         float intensity = voiceSettings[settingsIdx].tremoloOn / 127.0f;
 
-        // Time-based phase increment
-        unsigned long elapsed = now - tremoloLastTime[voiceIdx];
-        if (elapsed > 0 && elapsed < 100) {
-          tremoloPhase[voiceIdx] += rate * (elapsed / 1000.0f);
-        }
-        tremoloLastTime[voiceIdx] = now;
+        // Fixed-rate phase increment
+        tremoloPhase[voiceIdx] += rate * (PITCH_MOD_UPDATE_MS / 1000.0f);
         if (tremoloPhase[voiceIdx] >= 1.0f) tremoloPhase[voiceIdx] -= 1.0f;
 
-        // Calculate tremolo amount (0.5 + 0.5*sin = 0 to 1)
-        float tremLfo = 0.5f + 0.5f * fastSin01(tremoloPhase[voiceIdx]);
-        // Scale by depth and intensity: output ranges from (1-depth*intensity) to 1
-        float tremMult = 1.0f - (1.0f - tremLfo) * depth * intensity;
+        // Centered tremolo: modulates ±depth around 1.0
+        float tremLfo = fastSin01(tremoloPhase[voiceIdx]);  // -1 to +1
+        float tremMult = 1.0f + tremLfo * depth * intensity * 0.5f;
         vol = (uint8_t)(vol * tremMult + 0.5f);
       }
 
@@ -362,6 +339,7 @@ void resetAllControllers(uint8_t ch) {
   vibPhase[ch] = 0;
   vibStartTime[ch] = 0;
   vibLastTime[ch] = 0;
+  expressionSmooth[ch] = 127.0f;
 
   if (ch < 9) {
     if (sidModeGlobal) {

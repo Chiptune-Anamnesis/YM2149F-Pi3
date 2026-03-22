@@ -39,8 +39,8 @@
 // VELOCITY & EXPRESSION
 // ============================================================================
 
-#define VELOCITY_GAMMA  0.3f    // Gamma curve (lower = more boost for soft notes)
-#define VELOCITY_MIN    4       // Minimum YM volume (0-15)
+#define VELOCITY_GAMMA  1.5f    // Gamma curve (>1 = more dynamic range, <1 = compressed)
+#define VELOCITY_MIN    2       // Minimum YM volume (0-15)
 #define VELOCITY_MAX    15      // Maximum YM volume (1-15)
 #define EXPRESSION_AMOUNT 0.3f  // How much CC7/CC11 affects volume (0.0-1.0)
 
