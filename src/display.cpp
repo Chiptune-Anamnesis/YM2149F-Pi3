@@ -201,7 +201,8 @@ int getCurrentModeIndex() {
   // Use snapshot for Core 1 thread-safe read
   if (displaySnapshotCopy.polyMode == 2) return 0;  // Mono
   if (displaySnapshotCopy.polyMode == 0) return 1;  // Semi
-  return 2;  // Poly
+  if (displaySnapshotCopy.polyMode == 1) return 2;  // Poly
+  return 3;  // Multi
 }
 
 const char* getModeName(int idx) {
@@ -209,6 +210,7 @@ const char* getModeName(int idx) {
     case 0: return "MONO";
     case 1: return "SEMI";
     case 2: return "POLY";
+    case 3: return "MULT";
     default: return "???";
   }
 }
@@ -220,6 +222,7 @@ void applyModeFromIndex(int modeIdx) {
     case 0: newPolyMode = 2; break;  // Mono
     case 1: newPolyMode = 0; break;  // Semi
     case 2: newPolyMode = 1; break;  // Poly
+    case 3: newPolyMode = 3; break;  // Multi
     default: return;
   }
   sendCommand(CMD_SET_POLY_MODE, newPolyMode);

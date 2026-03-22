@@ -52,7 +52,7 @@ extern int tempLinkValue;
 #define MENU_MIDI 8       // MIDI channel settings
 #define MENU_RESET 9      // Reset all voices and FX to defaults
 #define MENU_EXIT 10
-#define MODE_COUNT 3
+#define MODE_COUNT 4  // MONO, SEMI, POLY, MULTI
 #define LINK_MODE_COUNT 4  // OFF, CH1, CH2, ALL
 
 // Currently selected chip for settings (0, 1, or 2)

@@ -128,7 +128,7 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                     // In SID mode, search chips 1-2
                     startChip = 1;
                     endChip = 3;
-                  } else if (polyMode == 1 || unisonMode) {
+                  } else if (polyMode == 1 || polyMode == 3 || unisonMode) {
                     startChip = 0;
                     endChip = 3;
                   } else {
@@ -154,7 +154,7 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                     // In SID mode, search chips 1-2
                     startChip = 1;
                     endChip = 3;
-                  } else if (polyMode == 1 || unisonMode) {
+                  } else if (polyMode == 1 || polyMode == 3 || unisonMode) {
                     startChip = 0;
                     endChip = 3;
                   } else {
@@ -175,9 +175,10 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
               break;
       case 68:  laserMode[ch] = (d2 >= 64); break;
       case 69:  laserAmt[ch] = d2 / 127.0f; break;
-      case 70:  // Polyphony mode
-              if (d2 >= 85) polyMode = 2;
-              else if (d2 >= 43) polyMode = 1;
+      case 70:  // Polyphony mode: 0-31=semi, 32-63=poly, 64-95=mono, 96-127=multi
+              if (d2 >= 96) polyMode = 3;
+              else if (d2 >= 64) polyMode = 2;
+              else if (d2 >= 32) polyMode = 1;
               else polyMode = 0;
               break;
       case 71:  // SID toggle - now controls global SID mode

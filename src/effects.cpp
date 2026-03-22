@@ -135,7 +135,7 @@ void updatePitchMod(uint8_t ch) {
     // In SID mode, always search chips 1 and 2 (where SID voices are)
     startChip = 1;
     endChip = 3;
-  } else if (polyMode == 1 || unisonMode) {
+  } else if (polyMode == 1 || polyMode == 3 || unisonMode) {
     startChip = 0;
     endChip = 3;
   } else {
@@ -150,9 +150,12 @@ void updatePitchMod(uint8_t ch) {
       uint8_t voiceIdx = chip * 3 + v;  // 0-8 voice index
       // In semi-poly mode, use channel-based settings so voice shaping
       // follows the MIDI channel predictably (like mono mode)
-      uint8_t settingsIdx = (polyMode == 0)
-          ? chip * 3 + (voiceChan[chip][v] % 3)
-          : voiceIdx;
+      // Settings lookup depends on poly mode:
+      // Mono/Semi/Multi: MIDI channel → settings (ch4 → voiceSettings[3])
+      // Poly: physical voice → settings (voice 0A → voiceSettings[0])
+      uint8_t settingsIdx = (polyMode == 1)
+          ? voiceIdx
+          : voiceChan[chip][v] % 9;
 
       // Per-voice vibrato LFO
       float lfo = 0;
@@ -458,9 +461,12 @@ void updateAllEnvelopes() {
     // Process envelope for this voice
     if (envStage[voiceIdx] != ENV_OFF) {
       // In semi-poly mode, use channel-based settings
-      uint8_t settingsIdx = (polyMode == 0)
-          ? chip * 3 + (voiceChan[chip][v] % 3)
-          : voiceIdx;
+      // Settings lookup depends on poly mode:
+      // Mono/Semi/Multi: MIDI channel → settings (ch4 → voiceSettings[3])
+      // Poly: physical voice → settings (voice 0A → voiceSettings[0])
+      uint8_t settingsIdx = (polyMode == 1)
+          ? voiceIdx
+          : voiceChan[chip][v] % 9;
       uint8_t attack = voiceSettings[settingsIdx].envAttack;
       uint8_t decay = voiceSettings[settingsIdx].envDecay;
       uint8_t sustain = voiceSettings[settingsIdx].envSustain;

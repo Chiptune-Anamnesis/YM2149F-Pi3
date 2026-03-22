@@ -716,10 +716,11 @@ void processCommands() {
       if (sidModeGlobal) { sidModeStop(); sidModeGlobal = false; }
       if (sampleModeGlobal) { sampleModeExit(); sampleModeGlobal = false; }
 
+      uint8_t savedPolyMode = polyMode;  // Preserve across mode switch
       settingsInit();
       effectsInit();
       fxSetEnabled(false);
-      polyMode = 1;
+      polyMode = savedPolyMode;
 
       if (newMode == 1) { sidModeGlobal = true; sidModeInit(); }
       if (newMode == 2) { sampleModeGlobal = true; sampleModeEnter(); }

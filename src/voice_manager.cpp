@@ -238,11 +238,9 @@ RAM_FUNC void ymSafeWrite(uint8_t chip, uint8_t reg, uint8_t val) {
 }
 
 RAM_FUNC void setVoice(uint8_t chip, uint8_t v, uint16_t per, uint8_t vol) {
-  // In semi-poly mode, use channel-based settings so voice shaping
-  // follows the MIDI channel predictably (like mono mode)
-  uint8_t settingsIdx = (polyMode == 0)
-      ? chip * 3 + (voiceChan[chip][v] % 3)
-      : chip * 3 + v;
+  uint8_t settingsIdx = (polyMode == 1)
+      ? chip * 3 + v
+      : voiceChan[chip][v] % 9;
 
   // Apply per-voice max volume cap
   if (vol > voiceSettings[settingsIdx].maxVolume) {
@@ -529,8 +527,8 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     uint8_t allowedMask = getAllowedVoicesMask(chip);
     if (!(allowedMask & (1 << v))) return;  // Voice disabled, ignore note
   }
-  else if (polyMode == 1) {
-    // FULL POLY
+  else if (polyMode == 1 || polyMode == 3) {
+    // FULL POLY / MULTI (same allocation, different settings lookup)
     chip = 0xFF;
     v = 0xFF;
 
@@ -641,11 +639,9 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     voiceDetune[chip][voice] = 0;
 
     uint8_t voiceIdx = chip * 3 + voice;
-    // In semi-poly mode, use channel-based settings so voice shaping
-    // follows the MIDI channel predictably (like mono mode)
-    uint8_t settingsIdx = (polyMode == 0)
-        ? chip * 3 + (ch % 3)
-        : voiceIdx;
+    uint8_t settingsIdx = (polyMode == 1)
+        ? chip * 3 + voice
+        : ch % 9;
 
     // Calculate modified period with voice settings (matches tpBase in effects.cpp)
     float detuneSemi = voiceSettings[settingsIdx].detuneCents / 100.0f;
@@ -747,7 +743,7 @@ void noteOff(uint8_t ch, uint8_t note) {
         }
       }
     }
-    else if (polyMode == 1 || unisonMode) {
+    else if (polyMode == 1 || polyMode == 3 || unisonMode) {
       for (uint8_t c = 0; c < 3; c++) {
         for (uint8_t v = 0; v < 3; v++) {
           if (voiceActive[c][v] && voiceChan[c][v] == ch && voiceNote[c][v] == note) {
@@ -804,7 +800,7 @@ void noteOff(uint8_t ch, uint8_t note) {
       }
     }
   }
-  else if (polyMode == 1 || unisonMode) {
+  else if (polyMode == 1 || polyMode == 3 || unisonMode) {
     for (uint8_t c = 0; c < 3; c++) {
       for (uint8_t v = 0; v < 3; v++) {
         if (voiceActive[c][v] && voiceChan[c][v] == ch && voiceNote[c][v] == note) {
