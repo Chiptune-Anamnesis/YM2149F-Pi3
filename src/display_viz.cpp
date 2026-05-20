@@ -68,6 +68,7 @@ const char* getPotCatParam(const PotAssignment& pa) {
         case 0: return "ENV:ATK";
         case 1: return "ENV:DCY";
         case 2: return "ENV:SUS";
+        case 3: return "ENV:REL";
       }
       break;
     case PCAT_TREMOLO:
@@ -701,4 +702,141 @@ void updateDisplayDrums() {
   display.print("MODE:");
   display.print(getSampleModeName(displaySnapshotCopy.sampleMode));
 
+}
+
+// ============================================================================
+// TV STATIC / POLTERGEIST VISUALIZATION
+// MIDI-reactive noise: signal breaks through the interference
+// ============================================================================
+
+void updateDisplayStatic() {
+  static unsigned long lastUpdate = 0;
+  static uint32_t rng = 12345;  // Fast PRNG state
+  static float signalDecay[9] = {0};  // Per-voice signal strength (decays after note-off)
+  static float glitchPhase = 0;
+
+  unsigned long now = millis();
+  if (now - lastUpdate < DISPLAY_UPDATE_MS) return;
+  float dt = (now - lastUpdate) / 1000.0f;
+  lastUpdate = now;
+
+  display.clearDisplay();
+
+  // Fast xorshift PRNG
+  #define RNG() (rng ^= rng << 13, rng ^= rng >> 17, rng ^= rng << 5, rng)
+
+  // Count active voices and total energy
+  int activeCount = 0;
+  float totalEnergy = 0;
+  for (uint8_t ch = 0; ch < 9; ch++) {
+    uint8_t chip = ch / 3;
+    uint8_t voice = ch % 3;
+    if (displaySnapshotCopy.voiceActive[chip][voice] &&
+        displaySnapshotCopy.voiceVol[chip][voice] > 0) {
+      signalDecay[ch] = 1.0f;
+      activeCount++;
+    } else {
+      signalDecay[ch] *= 0.92f;  // ~150ms decay
+    }
+    totalEnergy += signalDecay[ch];
+  }
+
+  // Glitch phase advances faster with more voices
+  glitchPhase += dt * (2.0f + totalEnergy * 3.0f);
+  if (glitchPhase > 100.0f) glitchPhase -= 100.0f;
+
+  // Static density: more noise when idle, less when signal is strong
+  // At full energy (~9 voices), static is sparse. At 0, it's dense.
+  float staticDensity = 1.0f - totalEnergy * 0.08f;
+  if (staticDensity < 0.15f) staticDensity = 0.15f;
+
+  // === FILL WITH STATIC NOISE ===
+  for (int y = 0; y < 64; y++) {
+    for (int x = 0; x < 128; x += 2) {  // Every other pixel for speed
+      if ((RNG() & 0xFF) < (uint8_t)(staticDensity * 180)) {
+        display.drawPixel(x, y, SH110X_WHITE);
+      }
+    }
+  }
+
+  // === MIDI-REACTIVE SIGNAL BANDS ===
+  // Each active voice creates a horizontal disruption zone
+  for (uint8_t ch = 0; ch < 9; ch++) {
+    uint8_t chip = ch / 3;
+    uint8_t voice = ch % 3;
+    float strength = signalDecay[ch];
+    if (strength < 0.05f) continue;
+
+    // Note pitch determines Y position (high notes = top, low notes = bottom)
+    uint8_t note = displaySnapshotCopy.voiceNote[chip][voice];
+    int bandY = 60 - ((note - 20) * 55 / 80);  // Map note range to screen
+    bandY = constrain(bandY, 2, 60);
+
+    // Volume determines band width
+    uint8_t vol = displaySnapshotCopy.voiceVol[chip][voice];
+    int bandH = 2 + (int)(vol * strength * 0.8f);
+
+    // Clear a band through the static (signal breaking through)
+    for (int y = bandY - bandH/2; y <= bandY + bandH/2; y++) {
+      if (y < 0 || y >= 64) continue;
+
+      // Draw horizontal glitch line — a mix of clear and inverted pixels
+      uint32_t lineRng = RNG();
+      int offset = (int)(sinf(glitchPhase * 0.7f + y * 0.3f) * strength * 8.0f);
+
+      for (int x = 0; x < 128; x++) {
+        int sx = x + offset;
+        if (sx < 0 || sx >= 128) continue;
+
+        // Signal pattern: horizontal scan lines with noise
+        bool signal;
+        if (y == bandY) {
+          // Center line: bright, with glitchy gaps
+          signal = ((x + (int)(glitchPhase * 20)) % (4 + (lineRng & 3))) != 0;
+        } else {
+          // Flanking lines: sparser, more distorted
+          signal = ((RNG() & 0x07) < (uint8_t)(strength * 5));
+        }
+
+        if (signal) {
+          display.drawPixel(sx, y, SH110X_WHITE);
+        } else {
+          display.drawPixel(sx, y, SH110X_BLACK);
+        }
+      }
+    }
+
+    // Vertical glitch tear — brief vertical line disruption at random X
+    if (strength > 0.5f && (RNG() & 0x03) == 0) {
+      int tearX = (RNG() % 100) + 14;
+      int tearH = 4 + (RNG() % (int)(strength * 20));
+      for (int ty = bandY - tearH/2; ty <= bandY + tearH/2; ty++) {
+        if (ty >= 0 && ty < 64) {
+          display.drawPixel(tearX, ty, (RNG() & 1) ? SH110X_WHITE : SH110X_BLACK);
+          display.drawPixel(tearX + 1, ty, (RNG() & 1) ? SH110X_WHITE : SH110X_BLACK);
+        }
+      }
+    }
+  }
+
+  // === PERIODIC FULL-SCREEN GLITCH (poltergeist burst) ===
+  // When lots of voices active, occasional full-screen horizontal tear
+  if (totalEnergy > 3.0f && (RNG() & 0x1F) == 0) {
+    int tearY = RNG() % 64;
+    int tearH = 2 + (RNG() % 4);
+    int shift = (RNG() % 16) - 8;
+    for (int y = tearY; y < tearY + tearH && y < 64; y++) {
+      // Shift entire row horizontally (screen tear effect)
+      for (int x = 127; x >= 0; x--) {
+        int sx = x - shift;
+        if (sx >= 0 && sx < 128) {
+          // Copy pixel with shift
+          // (can't actually read pixels back, so just draw noise in the tear)
+          display.drawPixel(x, y, (RNG() & 1) ? SH110X_WHITE : SH110X_BLACK);
+        }
+      }
+    }
+  }
+
+  #undef RNG
 }

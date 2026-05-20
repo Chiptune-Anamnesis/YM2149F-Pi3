@@ -26,7 +26,8 @@ enum DisplayMode {
 #define VIZ_MODE_MATRIX   2
 #define VIZ_MODE_CHMATRIX 3
 #define VIZ_MODE_SAMPLE   4
-#define VIZ_MODE_COUNT    5
+#define VIZ_MODE_STATIC   5
+#define VIZ_MODE_COUNT    6
 extern uint8_t vizMode;
 
 // --- Display State ---
@@ -264,16 +265,17 @@ extern unsigned long smplPresetDeleteStartTime;
 extern bool smplPresetFromMainMenu;  // true if entered from MENU_PRESETS
 
 // MIDI menu item indices
-#define MIDIMENU_ITEM_COUNT 9
+#define MIDIMENU_ITEM_COUNT 10
 #define MIDIMENU_MCH 0       // MIDI channel (all modes)
 #define MIDIMENU_MODE 1      // Device mode: YM/SID/SMPL
 #define MIDIMENU_ROUTE 2     // MIDI channel routing
 #define MIDIMENU_VIZ 3       // Visualization mode
 #define MIDIMENU_USB 4       // USB mode (MIDI/Serial) - requires reboot
 #define MIDIMENU_BRT 5       // Display brightness (0-10)
-#define MIDIMENU_POTS 6      // Pot defaults submenu
-#define MIDIMENU_CLK 7       // MIDI clock sync toggle
-#define MIDIMENU_BACK 8
+#define MIDIMENU_VEL 6       // Velocity curve (0-10)
+#define MIDIMENU_POTS 7      // Pot defaults submenu
+#define MIDIMENU_CLK 8       // MIDI clock sync toggle
+#define MIDIMENU_BACK 9
 
 // MIDI menu state
 extern int midiMenuSelection;
@@ -301,6 +303,7 @@ void updateDisplayScope();   // Oscilloscope visualization
 void updateDisplayMatrix();         // 3x3 grid oscilloscope (all 9 voices)
 void updateDisplayChannelMatrix();  // 3x3 grid oscilloscope (MIDI channels 1-9)
 void updateDisplayDrums();          // Drum sample waveform visualization
+void updateDisplayStatic();         // TV static / poltergeist visualization
 
 // Update main menu display
 void updateMenu();

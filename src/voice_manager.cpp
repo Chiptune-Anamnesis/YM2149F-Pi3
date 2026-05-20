@@ -18,6 +18,10 @@ extern YM2149 ym;
 // ============================================================================
 
 uint8_t polyMode = 1;  // Default: full poly
+
+// Runtime velocity settings (adjustable from MIDI menu)
+float velocityGamma = VELOCITY_GAMMA_DEFAULT;
+uint8_t velocityMin = VELOCITY_MIN_DEFAULT;
 bool unisonMode = false;
 float unisonDetuneCents = 12.0f;
 
@@ -99,9 +103,9 @@ static void noteOnSid(uint8_t ch, uint8_t note, uint8_t vel) {
   uint16_t period = (uint16_t)(YM2149Class::YM_CLOCK_HZ / (16.0f * freq) + 0.5f);
   // Use same velocity curve as YM mode for consistent volume levels
   float velNorm = vel / 127.0f;
-  float velCurve = powf(velNorm, VELOCITY_GAMMA);
-  float range = VELOCITY_MAX - VELOCITY_MIN;
-  uint8_t volume = uint8_t(VELOCITY_MIN + velCurve * range + 0.5f);
+  float velCurve = powf(velNorm, velocityGamma);
+  float range = VELOCITY_MAX - velocityMin;
+  uint8_t volume = uint8_t(velocityMin + velCurve * range + 0.5f);
 
   // Set up voice state arrays (needed for effects processing)
   voiceActive[chip][v] = true;
@@ -238,7 +242,8 @@ RAM_FUNC void ymSafeWrite(uint8_t chip, uint8_t reg, uint8_t val) {
 }
 
 RAM_FUNC void setVoice(uint8_t chip, uint8_t v, uint16_t per, uint8_t vol) {
-  uint8_t settingsIdx = (polyMode == 1)
+  // SID mode: menu only writes by physical voice, so always look up by voiceIdx
+  uint8_t settingsIdx = (sidModeGlobal || polyMode == 1)
       ? chip * 3 + v
       : voiceChan[chip][v] % 9;
 
@@ -397,9 +402,9 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
 
   // Calculate velocity
   float velNorm = vel / 127.0f;
-  float velCurve = powf(velNorm, VELOCITY_GAMMA);
-  float range = VELOCITY_MAX - VELOCITY_MIN;
-  uint8_t voiceVolume = uint8_t(VELOCITY_MIN + velCurve * range + 0.5f);
+  float velCurve = powf(velNorm, velocityGamma);
+  float range = VELOCITY_MAX - velocityMin;
+  uint8_t voiceVolume = uint8_t(velocityMin + velCurve * range + 0.5f);
 
   // --- UNISON MODE ---
   if (unisonMode) {

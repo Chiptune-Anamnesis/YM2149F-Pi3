@@ -153,7 +153,8 @@ void updatePitchMod(uint8_t ch) {
       // Settings lookup depends on poly mode:
       // Mono/Semi/Multi: MIDI channel → settings (ch4 → voiceSettings[3])
       // Poly: physical voice → settings (voice 0A → voiceSettings[0])
-      uint8_t settingsIdx = (polyMode == 1)
+      // SID: menu only writes by physical voice, so always look up by voiceIdx
+      uint8_t settingsIdx = (sidModeGlobal || polyMode == 1)
           ? voiceIdx
           : voiceChan[chip][v] % 9;
 
@@ -382,10 +383,11 @@ void triggerVolumeEnvelope(uint8_t ch) {
 void triggerADSEnvelope(uint8_t voiceIdx) {
   if (voiceIdx >= 9) return;
 
-  // In semi-poly mode, use channel-based settings
+  // In semi-poly mode, use channel-based settings.
+  // SID mode: menu only writes by physical voice, so always look up by voiceIdx.
   uint8_t chip = voiceIdx / 3;
   uint8_t v = voiceIdx % 3;
-  uint8_t settingsIdx = (polyMode == 0)
+  uint8_t settingsIdx = (!sidModeGlobal && polyMode == 0)
       ? chip * 3 + (voiceChan[chip][v] % 3)
       : voiceIdx;
 
@@ -412,10 +414,11 @@ void triggerADSEnvelope(uint8_t voiceIdx) {
 void releaseADSEnvelope(uint8_t voiceIdx) {
   if (voiceIdx >= 9) return;
 
-  // In semi-poly mode, use channel-based settings
+  // In semi-poly mode, use channel-based settings.
+  // SID mode: menu only writes by physical voice, so always look up by voiceIdx.
   uint8_t chip = voiceIdx / 3;
   uint8_t v = voiceIdx % 3;
-  uint8_t settingsIdx = (polyMode == 0)
+  uint8_t settingsIdx = (!sidModeGlobal && polyMode == 0)
       ? chip * 3 + (voiceChan[chip][v] % 3)
       : voiceIdx;
 
@@ -464,7 +467,8 @@ void updateAllEnvelopes() {
       // Settings lookup depends on poly mode:
       // Mono/Semi/Multi: MIDI channel → settings (ch4 → voiceSettings[3])
       // Poly: physical voice → settings (voice 0A → voiceSettings[0])
-      uint8_t settingsIdx = (polyMode == 1)
+      // SID: menu only writes by physical voice, so always look up by voiceIdx
+      uint8_t settingsIdx = (sidModeGlobal || polyMode == 1)
           ? voiceIdx
           : voiceChan[chip][v] % 9;
       uint8_t attack = voiceSettings[settingsIdx].envAttack;

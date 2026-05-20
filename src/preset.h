@@ -36,7 +36,7 @@
 #define SETTINGS_FLASH_SIZE 4096        // 4KB = 1 sector
 #define SETTINGS_FLASH_BASE (PRESET_FLASH_BASE + SETTINGS_FLASH_OFFSET)
 #define SETTINGS_MAGIC 0x594D5347  // "YMSG"
-#define SETTINGS_VERSION 7  // Version 7: replaced midiDrumChannel with sampleModeGlobal
+#define SETTINGS_VERSION 8  // Version 8: added velocity curve setting
 
 // Magic and version for validation
 #define PRESET_MAGIC 0x594D33    // "YM3"
@@ -165,7 +165,7 @@ struct GlobalSettings {
   uint8_t displayBrightness; // OLED brightness (0-255, default 200)
   PotAssignment potDefaults[3]; // Default pot assignments on boot (12 bytes)
   uint8_t clkSync;            // MIDI clock sync for FX (0=off, 1=on)
-  uint8_t reserved[1];       // Future expansion
+  uint8_t velocityCurve;     // Velocity curve index (0-10, maps to gamma 0.5-3.0)
 };
 
 // ============================================================================

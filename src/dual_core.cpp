@@ -846,6 +846,8 @@ void core1Entry() {
           updateDisplayChannelMatrix();
         } else if (vizMode == VIZ_MODE_SAMPLE) {
           updateDisplayDrums();
+        } else if (vizMode == VIZ_MODE_STATIC) {
+          updateDisplayStatic();
         } else {
           updateDisplay();
         }

@@ -195,7 +195,7 @@ void presetInit() {
       settings.potDefaults[1] = { PCAT_ENVELOPE, 2, TARGET_ALL, 0 };
       settings.potDefaults[2] = { PCAT_ENVELOPE, 3, TARGET_ALL, 0 };
       settings.clkSync = 0;
-      memset(settings.reserved, 0, sizeof(settings.reserved));
+      settings.velocityCurve = 10;  // Default: index 10 = most aggressive
       needsSave = true;
     } else {
       // Fresh install - initialize with defaults
@@ -215,7 +215,7 @@ void presetInit() {
       settings.potDefaults[1] = { PCAT_ENVELOPE, 2, TARGET_ALL, 0 };
       settings.potDefaults[2] = { PCAT_ENVELOPE, 3, TARGET_ALL, 0 };
       settings.clkSync = 0;
-      memset(settings.reserved, 0, sizeof(settings.reserved));
+      settings.velocityCurve = 10;  // Default: index 10 = most aggressive
       needsSave = true;
     }
   } else if (settings.version < SETTINGS_VERSION) {
@@ -247,6 +247,10 @@ void presetInit() {
     if (settings.version < 7) {
       // Version 6 -> 7: replace midiDrumChannel with sampleModeGlobal
       settings.sampleModeGlobal = 0;  // Default to off
+    }
+    if (settings.version < 8) {
+      // Version 7 -> 8: add velocity curve (was reserved byte)
+      settings.velocityCurve = 5;  // Default: gamma 1.5
     }
     settings.version = SETTINGS_VERSION;
     needsSave = true;
@@ -287,6 +291,10 @@ void presetInit() {
   }
   // Load MIDI clock sync setting
   fxClockSync = (settings.clkSync != 0);
+  // Load velocity curve
+  if (settings.velocityCurve <= 10) {
+    velocityGamma = velocityCurveTable[settings.velocityCurve];
+  }
 
   // Always start with no preset active - user must explicitly load one
   currentPresetIndex = PRESET_INDEX_NONE;
@@ -644,7 +652,14 @@ void saveGlobalSettings() {
     s.potDefaults[i] = potDefaultAssignments[i];
   }
   s.clkSync = fxClockSync ? 1 : 0;
-  memset(s.reserved, 0, sizeof(s.reserved));
+  // Find closest velocity curve index from current gamma
+  uint8_t velIdx = 5;  // Default
+  float minDiff = 99.0f;
+  for (uint8_t i = 0; i <= 10; i++) {
+    float diff = fabsf(velocityGamma - velocityCurveTable[i]);
+    if (diff < minDiff) { minDiff = diff; velIdx = i; }
+  }
+  s.velocityCurve = velIdx;
 
   // Write to last sector (doesn't affect presets at all)
   presetWriteFlash(SETTINGS_FLASH_OFFSET, (const uint8_t*)&s, sizeof(GlobalSettings));

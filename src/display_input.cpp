@@ -483,6 +483,12 @@ void handleEncoder() {
           uint8_t contrast = (midiTempValue >= 10) ? 255 : (uint8_t)(midiTempValue * 25);
           display.setContrast(contrast);
         }
+        else if (midiMenuSelection == MIDIMENU_VEL) {
+          // Velocity curve 0-10
+          midiTempValue += delta;
+          if (midiTempValue < 0) midiTempValue = 10;
+          if (midiTempValue > 10) midiTempValue = 0;
+        }
         else if (midiMenuSelection == MIDIMENU_CLK) {
           // Toggle clock sync on/off
           midiTempValue = (midiTempValue == 0) ? 1 : 0;
@@ -1479,6 +1485,23 @@ void handleEncoder() {
         } else {
           displayBrightness = (midiTempValue >= 10) ? 255 : (uint8_t)(midiTempValue * 25);
           display.setContrast(displayBrightness);
+          midiEditing = false;
+          midiSavePending = true;
+        }
+      }
+      else if (midiMenuSelection == MIDIMENU_VEL) {
+        if (!midiEditing) {
+          midiEditing = true;
+          // Find current index from gamma
+          midiTempValue = 5;
+          float minD = 99.0f;
+          for (uint8_t i = 0; i <= 10; i++) {
+            float d = velocityGamma - velocityCurveTable[i];
+            if (d < 0) d = -d;
+            if (d < minD) { minD = d; midiTempValue = i; }
+          }
+        } else {
+          velocityGamma = velocityCurveTable[midiTempValue];
           midiEditing = false;
           midiSavePending = true;
         }

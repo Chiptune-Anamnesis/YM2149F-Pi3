@@ -1935,16 +1935,30 @@ void updateMidiMenu() {
   display.print(vizVal == VIZ_MODE_BARS ? "BARS" :
                 vizVal == VIZ_MODE_SCOPE ? "SCOPE" :
                 vizVal == VIZ_MODE_MATRIX ? "MATRIX" :
-                vizVal == VIZ_MODE_CHMATRIX ? "CHMATX" : "SMPL");
+                vizVal == VIZ_MODE_CHMATRIX ? "CHMATX" :
+                vizVal == VIZ_MODE_SAMPLE ? "SMPL" : "STATC");
   display.setTextColor(SH110X_WHITE);
 
   y += itemH;
 
-  // === Row 4: USB, BRT on same line ===
+  // === Row 4: USB, BRT, VEL on same line ===
   bool usbSel = (midiMenuSelection == MIDIMENU_USB);
   bool brtSel = (midiMenuSelection == MIDIMENU_BRT);
+  bool velSel = (midiMenuSelection == MIDIMENU_VEL);
   uint8_t brtScale = midiEditing && brtSel ? midiTempValue : (displayBrightness + 12) / 25;  // 0-255 to 0-10
   if (brtScale > 10) brtScale = 10;
+  // Find current velocity curve index from gamma
+  uint8_t velIdx = 5;
+  if (midiEditing && velSel) {
+    velIdx = midiTempValue;
+  } else {
+    float minD = 99.0f;
+    for (uint8_t i = 0; i <= 10; i++) {
+      float d = velocityGamma - velocityCurveTable[i];
+      if (d < 0) d = -d;
+      if (d < minD) { minD = d; velIdx = i; }
+    }
+  }
 
   // USB (left)
   if (usbSel && !midiEditing) {
@@ -1977,6 +1991,23 @@ void updateMidiMenu() {
     display.setTextColor(SH110X_BLACK);
   }
   display.print(brtScale);
+  display.setTextColor(SH110X_WHITE);
+
+  // VEL
+  int velX = 74;
+  if (velSel && !midiEditing) {
+    display.fillRect(velX - 2, y - 6, 28, itemH, SH110X_WHITE);
+    display.setTextColor(SH110X_BLACK);
+  }
+  display.setCursor(velX, y);
+  display.print("VEL:");
+  if (midiEditing && velSel) {
+    display.setTextColor(SH110X_WHITE);
+    int vx = display.getCursorX();
+    display.fillRect(vx, y - 6, 14, itemH, SH110X_WHITE);
+    display.setTextColor(SH110X_BLACK);
+  }
+  display.print(velIdx);
   display.setTextColor(SH110X_WHITE);
 
   y += itemH;

@@ -39,10 +39,20 @@
 // VELOCITY & EXPRESSION
 // ============================================================================
 
-#define VELOCITY_GAMMA  1.5f    // Gamma curve (>1 = more dynamic range, <1 = compressed)
-#define VELOCITY_MIN    2       // Minimum YM volume (0-15)
-#define VELOCITY_MAX    15      // Maximum YM volume (1-15)
-#define EXPRESSION_AMOUNT 0.3f  // How much CC7/CC11 affects volume (0.0-1.0)
+#define VELOCITY_GAMMA_DEFAULT  0.15f // Default gamma curve (index 10 = most aggressive)
+#define VELOCITY_MIN_DEFAULT    2     // Default minimum YM volume (0-15)
+#define VELOCITY_MAX    15            // Maximum YM volume (1-15)
+#define EXPRESSION_AMOUNT 0.3f        // How much CC7/CC11 affects volume (0.0-1.0)
+
+// Runtime-adjustable velocity settings (set from MIDI menu, persisted to flash)
+extern float velocityGamma;
+extern uint8_t velocityMin;
+
+// Velocity curve index (0-10) to gamma lookup
+// 0 = most dynamic (soft notes quiet), 10 = most aggressive (everything loud)
+static const float velocityCurveTable[11] = {
+  3.0f, 2.5f, 2.0f, 1.7f, 1.5f, 1.2f, 1.0f, 0.7f, 0.5f, 0.3f, 0.15f
+};
 
 // ============================================================================
 // PITCH & MODULATION
