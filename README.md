@@ -1,16 +1,16 @@
 # YM2149Fx3 MIDI Synthesizer
 
-Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design — powered by RP2040 (Raspberry Pi Pico).
+Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, and real-time sound design - powered by RP2040 (Raspberry Pi Pico).
 
 ## Features
 
 ### 9-Voice Polyphonic YM2149F Synthesis
 - 3x YM2149F sound chips providing 9 independent tone voices
 - **Four voice allocation modes:**
-  - **MONO** — 1 voice per MIDI channel (ch1→voice 0A, ch2→0B, ... ch9→2C). Each channel has independent settings. True 9-channel multitimbral.
-  - **SEMI** — 3 voices per chip, MIDI channel determines chip (ch1-3→Chip 0, ch4-6→Chip 1, ch7-9→Chip 2). Channel-based settings.
-  - **POLY** — Up to 9-voice polyphony, any voice on any chip. Notes allocated to first free voice. Per-voice settings for individual voice tweaking and chip linking.
-  - **MULTI** — Full polyphony like POLY, but settings follow MIDI channel instead of physical voice. Best for multi-channel DAW sequencing where each channel needs its own vibrato, envelope, detune, etc.
+  - **MONO** - 1 voice per MIDI channel (ch1→voice 0A, ch2→0B, ... ch9→2C). Each channel has independent settings. True 9-channel multitimbral.
+  - **SEMI** - 3 voices per chip, MIDI channel determines chip (ch1-3→Chip 0, ch4-6→Chip 1, ch7-9→Chip 2). Channel-based settings.
+  - **POLY** - Up to 9-voice polyphony, any voice on any chip. Notes allocated to first free voice. Per-voice settings for individual voice tweaking and chip linking.
+  - **MULTI** - Full polyphony like POLY, but settings follow MIDI channel instead of physical voice. Best for multi-channel DAW sequencing where each channel needs its own vibrato, envelope, detune, etc.
 - Per-voice settings: detune (cents), octave shift, max volume, noise frequency
 - Chip linking: mirror Chip 0 settings across chips for massive unison sounds
 - MIDI channels 1-9 mapped to voices (3 per chip)
@@ -27,14 +27,14 @@ Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, 
 ### Sample Playback (SMPL Mode)
 - Timer-based 8-bit PCM playback at 8000 Hz on Chip 2 (3 polyphonic voices)
 - **Three sample sections:**
-  - **DRUM** — 24 Bitkits drum samples: kicks, snares, hi-hats, toms, claps, cowbell, tambourine, shaker
-  - **1SHT** — 24 Bitkits one-shot samples: beeps, blips, buzzes, glitches, metals, noises, stabs, vocals, zaps
-  - **DIGI** — 16 legacy ST-Sound DigiDrum samples (classic Atari ST sounds)
+  - **DRUM** - 24 Bitkits drum samples: kicks, snares, hi-hats, toms, claps, cowbell, tambourine, shaker
+  - **1SHT** - 24 Bitkits one-shot samples: beeps, blips, buzzes, glitches, metals, noises, stabs, vocals, zaps
+  - **DIGI** - 16 legacy ST-Sound DigiDrum samples (classic Atari ST sounds)
 - **Four playback modes:**
-  - **SNGL** — Always play the selected sample
-  - **SEQ** — Play samples sequentially (s00, s01, s02...)
-  - **RND** — Random sample each trigger
-  - **GM** — General MIDI drum map (notes 35-58 mapped to samples). OneShots use chromatic mapping from C2
+  - **SNGL** - Always play the selected sample
+  - **SEQ** - Play samples sequentially (s00, s01, s02...)
+  - **RND** - Random sample each trigger
+  - **GM** - General MIDI drum map (notes 35-58 mapped to samples). OneShots use chromatic mapping from C2
 - Per-section GM drum maps (Bitkits and DigiDrum have independent mappings)
 - Pitch control: -12 to +12 semitones fine tuning plus -3 to +3 octave shift (8.8 fixed-point)
 - Adjustable sample length (1-127, 127 = full sample)
@@ -42,19 +42,19 @@ Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, 
 - Voice stealing with same-sample retrigger and round-robin allocation
 
 ### Effects (Chip 2)
-- **Echo** — Delay, repeats, decay, volume
-- **Arpeggio** — Speed, pattern, volume, octave range
-- **Bit Crush** — Bit depth, sample rate, volume
-- **Reverb** — Taps, spacing, decay, detune, volume
-- **Chorus** — Detune spread with configurable volume
+- **Echo** - Delay, repeats, decay, volume
+- **Arpeggio** - Speed, pattern, volume, octave range
+- **Bit Crush** - Bit depth, sample rate, volume
+- **Reverb** - Taps, spacing, decay, detune, volume
+- **Chorus** - Detune spread with configurable volume
 - Flexible routing: per-chip or global
 
 ### Per-Voice Modulation
-- **Vibrato** — Rate (1.0-15.0 Hz), depth (0-200 cents), delay (0-2550ms)
-- **Tremolo** — Rate (1.0-15.0 Hz), depth (0-100%)
-- **Pitch Envelope** — Amount (0-24 semitones), time, direction (up/down)
-- **ADSR Envelope** — Attack, decay, sustain, release
-- **Portamento/Glide** — On/off per voice, adjustable speed
+- **Vibrato** - Rate (1.0-15.0 Hz), depth (0-200 cents), delay (0-2550ms)
+- **Tremolo** - Rate (1.0-15.0 Hz), depth (0-100%)
+- **Pitch Envelope** - Amount (0-24 semitones), time, direction (up/down)
+- **ADSR Envelope** - Attack, decay, sustain, release
+- **Portamento/Glide** - On/off per voice, adjustable speed
 
 ### Preset System
 - Save and load complete synth states to flash (8 user slots)
@@ -66,7 +66,7 @@ Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, 
 - USB-MIDI and TRS-MIDI (Serial1 at 31250 baud) simultaneously
 - MIDI channel filtering (per-channel, OMNI, or OFF)
 - Channel remapping (route any incoming channel to any internal channel)
-- 74 MIDI CC mappings covering voice, envelope, tremolo, FX, sample, and link controls — see [MIDI CC Map](MIDI_CC_MAP.md)
+- 74 MIDI CC mappings covering voice, envelope, tremolo, FX, sample, and link controls - see [MIDI CC Map](MIDI_CC_MAP.md)
 - Pitch bend (synth and sample modes)
 - MIDI Real-Time: Start (0xFA), Continue (0xFB), Stop (0xFC) with proper note/controller reset
 - MIDI clock sync
@@ -81,8 +81,8 @@ Triple YM2149F sound chip MIDI synthesizer with SID emulation, sample playback, 
 - Hierarchical menu system: Main → Settings → Submenus (Pitch, Vibrato, Tremolo, Envelope, Glide, Pitch Env, SID, FX, Sample)
 
 ### Dual-Core Architecture (RP2040)
-- **Core 0:** Audio engine — MIDI processing, YM2149 register writes, SID timer, sample timer, pitch modulation, effects
-- **Core 1:** UI — OLED display, encoder input, pot reading, menu system
+- **Core 0:** Audio engine - MIDI processing, YM2149 register writes, SID timer, sample timer, pitch modulation, effects
+- **Core 1:** UI - OLED display, encoder input, pot reading, menu system
 - Thread-safe communication via command queue and display snapshot
 - Interrupt-safe bus arbitration for shared YM2149 data bus
 
